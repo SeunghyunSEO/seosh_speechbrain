@@ -155,3 +155,7 @@ dmypy.json
 
 # Mac OS
 .DS_Store
+
+# inference_exp
+inference_experiment/pretrained_models/
+inference_experiment/LibriSpeech/
