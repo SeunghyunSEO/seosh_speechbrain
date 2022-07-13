@@ -65,13 +65,14 @@ python import -c "from speechbrain.pretrained import EncoderDecoderASR; asr_mode
 - TODO
   - [ ] need to modify and add argparser
 
+
 ```
 cd /workspace/seosh_speechbrain/inference_experiment
 python sb_inference.py 
 python fairseq_inference.py 
 ```
 
-'''
+```python
 (py38) root@557bec2a5c9d:/workspace/seosh_speechbrain/inference_experiment# python fairseq_inference.py 
 torchvision is not available - cannot save figures
 Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
@@ -114,4 +115,4 @@ S2S GREEDY :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE N
 JOINT BEAM :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
 
 TRUE TRANS :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
-'''
+```
