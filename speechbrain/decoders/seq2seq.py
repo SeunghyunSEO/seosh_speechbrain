@@ -734,7 +734,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
             torch.Size([528, 5, 107])
             '''
 
-            Tra()
+            # Tra()
 
             # Keep the original value
             log_probs_clone = log_probs.clone().reshape(batch_size, -1)

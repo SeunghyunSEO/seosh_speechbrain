@@ -78,6 +78,7 @@ def main():
     # logits = asr_model.mods.decoder.ctc_fc(encoder_out)
     # ctc_outputs2 = asr_model.mods.decoder.softmax(logits)
 
+    # Tra()
 
     '''
     (Pdb) encoder_out.size(); ctc_outputs.size()
@@ -137,6 +138,22 @@ def main():
             (dropout1): Dropout(p=0.0, inplace=False)
             (dropout2): Dropout(p=0.0, inplace=False)
           )
+
+
+    (Pdb) asr_model.mods.decoder.lm_modules.output_proj
+    ModuleList(
+      (layers): ModuleList(
+        (0): Linear(
+          (w): Linear(in_features=768, out_features=768, bias=True)
+        )
+        (1): LayerNorm(
+          (norm): LayerNorm((768,), eps=1e-06, elementwise_affine=True)
+        )
+        (2): Linear(
+          (w): Linear(in_features=768, out_features=5000, bias=True)
+        )
+      )
+    )
 
     (Pdb) asr_model.mods.decoder.fc
     Linear(
