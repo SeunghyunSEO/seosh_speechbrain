@@ -121,6 +121,53 @@ def main():
     temperature_lm=1.15,
   )
 
+  model_path = "/workspace/tmp_save_dir/vanilla_tfm_lm_12L/checkpoint_last.pt"
+  path, checkpoint = os.path.split(model_path)
+  
+  overrides = {
+      "task": 'language_modeling',
+      "data": path,
+  }
+  models, model_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
+      utils.split_paths(model_path, separator="\\"),
+      arg_overrides=overrides,
+      strict=True,
+  )
+  lm_model = models[0]
+  optimize_model(lm_model, model_cfg)
+
+
+  decoder_with_lm = S2STransformerBeamSearchforFairseq(
+    bos_index=tgt_dict.eos(),
+    eos_index=tgt_dict.eos(),
+    beam_size=10,
+    topk=1,
+    return_log_probs=False,
+    using_eos_threshold=False,
+    eos_threshold=1.5,
+    length_normalization=True,
+    length_rewarding=0,
+    coverage_penalty=0.0,
+    lm_weight=0.6,
+    lm_modules=lm_model,
+    ctc_weight=0.4,
+    blank_index=0,
+    ctc_score_mode="full",
+    ctc_window_size=0,
+    using_max_attn_shift=False,
+    max_attn_shift=60,
+    # minus_inf=-1e20,
+    # minus_inf=-float("-inf"),
+    minus_inf=-65000, # half tensor overflow ?
+    min_decode_ratio=0,
+    max_decode_ratio=1.0,
+    model=asr_model,
+    ctc_layer=asr_model.encoder.ctc_proj,
+    temperature=1.15,
+    temperature_lm=1.15,
+  )
+
+
   encoder_out = utils.apply_to_sample(apply_half, encoder_out)
   encoder_out = utils.move_to_cuda(encoder_out)
   wav_lens = utils.apply_to_sample(apply_half, lens)
@@ -130,60 +177,74 @@ def main():
     joint_predicted_tokens, scores = decoder(encoder_out, wav_lens)
 
   with torch.no_grad():
+    joint_lm_predicted_tokens, scores = decoder_with_lm(encoder_out, wav_lens)
+
+  with torch.no_grad():
     seq2seq_greedy_predicted_tokens = greedy_decoding(asr_model, tgt_dict, encoder_out)
 
-  for i, (e, seq2seq, joint) in enumerate(zip(emissions, seq2seq_greedy_predicted_tokens, joint_predicted_tokens)):
+  for i, (e, seq2seq, joint, joint_lm) in enumerate(zip(emissions, seq2seq_greedy_predicted_tokens, joint_predicted_tokens, joint_lm_predicted_tokens)):
     ctc_g = get_pred(e, blank_idx)
     ctc_greedy_hypo = tgt_dict.string(ctc_g, 'wordpiece')
     seq2seq_greedy_hypo = tgt_dict.string(seq2seq, 'wordpiece')
     joint_hypo = tgt_dict.string(joint, 'wordpiece')
+    joint_lm_hypo = tgt_dict.string(joint_lm, 'wordpiece')
 
     print('{} th hypothesis'.format(i+1))
     print('CTC GREEDY : ', ctc_greedy_hypo)
     print('S2S GREEDY : ', seq2seq_greedy_hypo)
     print('JOINT BEAM : ', joint_hypo)
+    print('JOINT LM B : ', joint_lm_hypo)
 
   '''
   (py38) root@557bec2a5c9d:/workspace/seosh_speechbrain/inference_experiment# python fairseq_inference.py 
-  torchvision is not available - cannot save figures
   Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
-
+  2022-07-25 02:32:40 | INFO | fairseq.tasks.language_modeling | dictionary: 10001 types
+  Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
   1 th hypothesis
   CTC GREEDY :  BEWARE OF MAKING THAT MISTAKE
   S2S GREEDY :  BEWARE OF MAKING THAT MISTAKE
   JOINT BEAM :  BEWARE OF MAKING THAT MISTAKE
+  JOINT LM B :  BEWARE OF MAKING THAT MISTAKE
   2 th hypothesis
   CTC GREEDY :  HE TRIED TO THINK HOW IT COULD BE
   S2S GREEDY :  HE TRIED TO THINK HOW IT COULD BE
   JOINT BEAM :  HE TRIED TO THINK HOW IT COULD BE
+  JOINT LM B :  HE TRIED TO THINK HOW IT COULD BE
   3 th hypothesis
   CTC GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
   S2S GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
   JOINT BEAM :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+  JOINT LM B :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
   4 th hypothesis
   CTC GREEDY :  HE COULD WAIT NO LONGER
   S2S GREEDY :  HE COULD WAIT NO LONGER
   JOINT BEAM :  HE COULD WAIT NO LONGER
+  JOINT LM B :  HE COULD WAIT NO LONGER
   5 th hypothesis
   CTC GREEDY :  THE UNIVERSITY
   S2S GREEDY :  THE UNIVERSITY
   JOINT BEAM :  THE UNIVERSITY
+  JOINT LM B :  THE UNIVERSITY
   6 th hypothesis
   CTC GREEDY :  HE KNOWS THEM BOTH
   S2S GREEDY :  HE KNOWS THEM BOTH
   JOINT BEAM :  HE KNOWS THEM BOTH
+  JOINT LM B :  HE KNOWS THEM BOTH
   7 th hypothesis
   CTC GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
   S2S GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
   JOINT BEAM :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+  JOINT LM B :  A VOICE FROM BEYOND THE WORLD WAS CALLING
   8 th hypothesis
   CTC GREEDY :  THEN HE COMES TO THE BEAK OF IT SH
   S2S GREEDY :  THEN HE COMES TO THE BEAK OF IT
   JOINT BEAM :  THEN HE COMES TO THE BEAK OF IT
+  JOINT LM B :  THEN HE COMES TO THE BEAK OF IT
   9 th hypothesis
   CTC GREEDY :  TO DO THIS HE MUST SCHEMEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
   S2S GREEDY :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
   JOINT BEAM :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+  JOINT LM B :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
 
   TRUE TRANS :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
   '''

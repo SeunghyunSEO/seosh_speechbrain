@@ -1773,12 +1773,19 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         memory = _update_mem(inp_tokens, memory)
         if not next(self.lm_modules.parameters()).is_cuda:
             self.lm_modules.to(inp_tokens.device)
-        logits = self.lm_modules(memory)
+        logits = self.lm_modules(memory)[0]
 
-        if self.lm_modules.adaptive_softmax is not None:
+        # adaptive_softmax_layer = False
+        # for k, p in self.lm_modules.named_parameters(): 
+        #     if 'adaptive' in k : 
+        #         adaptive_softmax_layer = True
+                
+        try:
             log_probs = self.lm_modules.adaptive_softmax.get_log_prob(logits / self.temperature_lm, None)
-        else:
+        except:
             log_probs = self.softmax(logits / self.temperature_lm)
+
+        # Tra()
 
         return log_probs[:, -1, :], memory
 
