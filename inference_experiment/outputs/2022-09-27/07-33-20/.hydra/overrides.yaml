@@ -1,0 +1,12 @@
+- distributed_training.distributed_port=-1
+- distributed_training.distributed_world_size=1
+- task.data=/mnt/clova_speech/users/seosh/librispeech_model/am/fairseq_audio_data2
+- task.labels=wp
+- model.w2v_path=/mnt/clova_speech/users/seosh/librispeech_model/am/w2v2/wav2vec_vox_new.pt
+- model._name=wav2vec_transducer
+- criterion._name=rnnt_loss
+- common.log_interval=25
+- common.tensorboard_logdir=/workspace/tmp_save_dir/220915_transducer/tblog/2022_09_27_07_33
+- checkpoint.save_dir=/workspace/tmp_save_dir/220915_transducer
+- checkpoint.save_interval_updates=200
+- dataset.max_tokens=1500000

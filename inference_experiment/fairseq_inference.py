@@ -7,96 +7,98 @@ from torch.nn.utils.rnn import pad_sequence
 from speechbrain.pretrained import EncoderDecoderASR
 
 from fairseq import checkpoint_utils, options, progress_bar, tasks, utils
+from fairseq.data.data_utils import post_process
 
 from pdb import set_trace as Tra
 
-
-# print('*'*30)
-# print('torch version ?', torch.__version__)
-# print('torchaudio version ?', torchaudio.__version__)
-# print('*'*30)
-# print('cuda availability ? {}'.format(torch.cuda.is_available()))
-# print('total gpu nums : {}'.format(torch.cuda.device_count()))
-# print('cudnn backends version : {}'.format(torch.backends.cudnn.version()))
-# print('cuda version : {}'.format(torch.version.cuda))
-# print('*'*30)
-# for n in range(torch.cuda.device_count()):
-#   print('{}th GPU name is {}'.format(n,torch.cuda.get_device_name(n)))
-#   print('\t capability of this GPU is {}'.format(torch.cuda.get_device_capability(n)))
-# print('*'*30)
+print('*'*30)
+print('torch version ?', torch.__version__)
+print('torchaudio version ?', torchaudio.__version__)
+print('*'*30)
+print('cuda availability ? {}'.format(torch.cuda.is_available()))
+print('total gpu nums : {}'.format(torch.cuda.device_count()))
+print('cudnn backends version : {}'.format(torch.backends.cudnn.version()))
+print('cuda version : {}'.format(torch.version.cuda))
+print('*'*30)
+for n in range(torch.cuda.device_count()):
+  print('{}th GPU name is {}'.format(n,torch.cuda.get_device_name(n)))
+  print('\t capability of this GPU is {}'.format(torch.cuda.get_device_capability(n)))
+print('*'*30)
 
 
 def main():
+  #####################################################
+  ######################## CTC ########################
+  #####################################################
 
-  model_path = "/workspace/tmp_save_dir/w2v2_s2s_joint_0.2_inter_0.1/checkpoint_best.pt"
-  # model_path = "/mnt/clova_speech/users/seosh/librispeech_model/am/w2v2/wav2vec2_vox_960h_new.pt"
-  path, checkpoint = os.path.split(model_path)
+  ctc_model_path = "/mnt/clova_speech/users/seosh/librispeech_model/am/w2v2/wav2vec2_vox_960h_new.pt"
+  path, checkpoint = os.path.split(ctc_model_path)
   
   overrides = {
       "task": 'audio_finetuning',
       "data": path,
   }
   models, model_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
-      utils.split_paths(model_path, separator="\\"),
+      utils.split_paths(ctc_model_path, separator="\\"),
       arg_overrides=overrides,
       strict=True,
   )
-  asr_model = models[0]
-  optimize_model(asr_model, model_cfg)
+  ctc_model = models[0]
+  optimize_model(ctc_model, model_cfg)
+
+  ctc_tgt_dict = task.target_dictionary
+  ctc_blank_idx = ctc_tgt_dict.index(task.blank_symbol)
+
+
+  #####################################################
+  ######################## AED ########################
+  #####################################################
+
+  vanilla_aed_model_path = "/workspace/tmp_save_dir/220808_w2v2_seq2seq_4.6_reproduce/tmp_checkpoint_best.pt"
+  path, checkpoint = os.path.split(vanilla_aed_model_path)
+  
+  overrides = {
+      "task": 'audio_finetuning',
+      "data": path,
+  }
+  models, model_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
+      utils.split_paths(vanilla_aed_model_path, separator="\\"),
+      arg_overrides=overrides,
+      strict=True,
+  )
+  aed_model = models[0]
+  optimize_model(aed_model, model_cfg)
+
+  #####################################################
+  ####################### Joint #######################
+  #####################################################
+
+  # model_path = "/workspace/tmp_save_dir/w2v2_s2s_joint_0.2_inter_0.1/checkpoint_best.pt"
+  # joint_model_path = "/workspace/tmp_save_dir/220817_w2v2_seq2seq_4.6_joint_0.3/checkpoint_best.pt"
+  joint_model_path = "/workspace/tmp_save_dir/220927_w2v2_seq2seq_4.6_ce_0.7_joint_0.2_inter_0.1/checkpoint_last.pt"
+  path, checkpoint = os.path.split(joint_model_path)
+  
+  overrides = {
+      "task": 'audio_finetuning',
+      "data": path,
+  }
+  models, model_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
+      utils.split_paths(joint_model_path, separator="\\"),
+      arg_overrides=overrides,
+      strict=True,
+  )
+  joint_model = models[0]
+  optimize_model(joint_model, model_cfg)
 
   tgt_dict = task.target_dictionary
   blank_idx = tgt_dict.index(task.blank_symbol)
 
-  audio_files=[]
-  # audio_files.append('./LibriSpeech/test-clean/1089/134686/1089-134686-0030.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1089/134686/1089-134686-0014.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1089/134686/1089-134686-0007.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1089/134691/1089-134691-0000.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1089/134691/1089-134691-0003.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1188/133604/1188-133604-0030.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1089/134691/1089-134691-0019.flac')
-  # audio_files.append('./LibriSpeech/test-clean/1188/133604/1188-133604-0006.flac')
-
-  audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7902/96591/7902-96591-0015.flac')
-  audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7902/96592/7902-96592-0014.flac')
-  audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7902/96592/7902-96592-0030.flac')
-  audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7018/75788/7018-75788-0018.flac')
-  audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7018/75789/7018-75789-0011.flac')
-
-  sigs=[]
-  lens=[]
-  for audio_file in audio_files:
-    snt, fs = torchaudio.load(audio_file)
-    sigs.append(snt.squeeze())
-    lens.append(snt.shape[1])
-
-  batch = pad_sequence(sigs, batch_first=True, padding_value=0.0)
-  lens = torch.Tensor(lens) / batch.shape[1]
-
-  encoder_input = dict()
-  encoder_input['source'] = batch
-  encoder_input['padding_mask'] = (batch==0)
-  encoder_input = utils.apply_to_sample(apply_half, encoder_input)
-  encoder_input = utils.move_to_cuda(encoder_input)
-
-  with torch.no_grad():
-    encoder_out = asr_model.encoder(**encoder_input)
-  logits = asr_model.encoder.ctc_proj(encoder_out["encoder_out_before_proj"])
-  lprobs = utils.log_softmax(logits.float(), dim=-1)
-  emissions = lprobs.transpose(0, 1).float().cpu().contiguous()
-
-  # with torch.no_grad():
-  #   encoder_out = asr_model(**encoder_input)
-  # # emissions = asr_model.get_logits(encoder_out)
-  # emissions = encoder_out['encoder_out']
-  # emissions = utils.log_softmax(emissions.float(), dim=-1)
-  # emissions = emissions.transpose(0, 1).float().cpu().contiguous()
 
   from speechbrain.decoders import S2STransformerBeamSearchforFairseq
-  decoder = S2STransformerBeamSearchforFairseq(
+  joint_decoder = S2STransformerBeamSearchforFairseq(
     bos_index=tgt_dict.eos(),
     eos_index=tgt_dict.eos(),
-    beam_size=10,
+    beam_size=5,
     topk=1,
     return_log_probs=False,
     using_eos_threshold=False,
@@ -118,21 +120,25 @@ def main():
     minus_inf=-65000, # half tensor overflow ?
     min_decode_ratio=0,
     max_decode_ratio=1.0,
-    model=asr_model,
-    ctc_layer=asr_model.encoder.ctc_proj,
+    attention_decoder=joint_model.decoder,
+    ctc_layer=joint_model.encoder.ctc_proj,
     temperature=1.15,
     temperature_lm=1.15,
   )
 
-  model_path = "/workspace/tmp_save_dir/vanilla_tfm_lm_12L/checkpoint_last.pt"
-  path, checkpoint = os.path.split(model_path)
+  #####################################################
+  ######################## LM #########################
+  #####################################################
+
+  lm_model_path = "/workspace/tmp_save_dir/vanilla_tfm_lm_12L/checkpoint_last.pt"
+  path, checkpoint = os.path.split(lm_model_path)
   
   overrides = {
       "task": 'language_modeling',
       "data": path,
   }
   models, model_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
-      utils.split_paths(model_path, separator="\\"),
+      utils.split_paths(lm_model_path, separator="\\"),
       arg_overrides=overrides,
       strict=True,
   )
@@ -140,10 +146,10 @@ def main():
   optimize_model(lm_model, model_cfg)
 
 
-  decoder_with_lm = S2STransformerBeamSearchforFairseq(
+  joint_decoder_with_lm = S2STransformerBeamSearchforFairseq(
     bos_index=tgt_dict.eos(),
     eos_index=tgt_dict.eos(),
-    beam_size=10,
+    beam_size=5,
     topk=1,
     return_log_probs=False,
     using_eos_threshold=False,
@@ -164,124 +170,551 @@ def main():
     minus_inf=-65000, # half tensor overflow ?
     min_decode_ratio=0,
     max_decode_ratio=1.0,
-    model=asr_model,
-    ctc_layer=asr_model.encoder.ctc_proj,
+    attention_decoder=joint_model.decoder,
+    ctc_layer=joint_model.encoder.ctc_proj,
     temperature=1.15,
     temperature_lm=1.15,
   )
 
+  iterators = []
+  audio_files=[]
+  audio_files.append('./LibriSpeech/test-clean/1089/134686/1089-134686-0030.flac')
+  audio_files.append('./LibriSpeech/test-clean/1089/134686/1089-134686-0014.flac')
+  audio_files.append('./LibriSpeech/test-clean/1089/134686/1089-134686-0007.flac')
+  audio_files.append('./LibriSpeech/test-clean/1089/134691/1089-134691-0000.flac')
+  audio_files.append('./LibriSpeech/test-clean/1089/134691/1089-134691-0003.flac')
+  audio_files.append('./LibriSpeech/test-clean/1188/133604/1188-133604-0030.flac')
+  audio_files.append('./LibriSpeech/test-clean/1089/134691/1089-134691-0019.flac')
+  audio_files.append('./LibriSpeech/test-clean/1188/133604/1188-133604-0006.flac')
+  iterators.append(audio_files)
 
-  encoder_out = utils.apply_to_sample(apply_half, encoder_out)
-  encoder_out = utils.move_to_cuda(encoder_out)
-  wav_lens = utils.apply_to_sample(apply_half, lens)
-  wav_lens = utils.move_to_cuda(wav_lens)
-
-  with torch.no_grad():
-    joint_predicted_tokens, scores = decoder(encoder_out, wav_lens)
-
-  with torch.no_grad():
-    joint_lm_predicted_tokens, scores = decoder_with_lm(encoder_out, wav_lens)
-
-  with torch.no_grad():
-    seq2seq_greedy_predicted_tokens = greedy_decoding(asr_model, tgt_dict, encoder_out)
-
-  for i, (e, seq2seq, joint, joint_lm) in enumerate(zip(emissions, seq2seq_greedy_predicted_tokens, joint_predicted_tokens, joint_lm_predicted_tokens)):
-    ctc_g = get_pred(e, blank_idx)
-    ctc_greedy_hypo = tgt_dict.string(ctc_g, 'wordpiece')
-    seq2seq_greedy_hypo = tgt_dict.string(seq2seq, 'wordpiece')
-    joint_hypo = tgt_dict.string(joint, 'wordpiece')
-    joint_lm_hypo = tgt_dict.string(joint_lm, 'wordpiece')
-
-    print('{} th hypothesis'.format(i+1))
-    print('CTC GREEDY : ', ctc_greedy_hypo)
-    print('S2S GREEDY : ', seq2seq_greedy_hypo)
-    print('JOINT BEAM : ', joint_hypo)
-    print('JOINT LM B : ', joint_lm_hypo)
-
-  '''
-  (py38) root@557bec2a5c9d:/workspace/seosh_speechbrain/inference_experiment# python fairseq_inference.py 
-  Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
-  2022-07-25 02:32:40 | INFO | fairseq.tasks.language_modeling | dictionary: 10001 types
-  Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
-
-  1 th hypothesis
-  CTC GREEDY :  BEWARE OF MAKING THAT MISTAKE
-  S2S GREEDY :  BEWARE OF MAKING THAT MISTAKE
-  JOINT BEAM :  BEWARE OF MAKING THAT MISTAKE
-  JOINT LM B :  BEWARE OF MAKING THAT MISTAKE
-  2 th hypothesis
-  CTC GREEDY :  HE TRIED TO THINK HOW IT COULD BE
-  S2S GREEDY :  HE TRIED TO THINK HOW IT COULD BE
-  JOINT BEAM :  HE TRIED TO THINK HOW IT COULD BE
-  JOINT LM B :  HE TRIED TO THINK HOW IT COULD BE
-  3 th hypothesis
-  CTC GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
-  S2S GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
-  JOINT BEAM :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
-  JOINT LM B :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
-  4 th hypothesis
-  CTC GREEDY :  HE COULD WAIT NO LONGER
-  S2S GREEDY :  HE COULD WAIT NO LONGER
-  JOINT BEAM :  HE COULD WAIT NO LONGER
-  JOINT LM B :  HE COULD WAIT NO LONGER
-  5 th hypothesis
-  CTC GREEDY :  THE UNIVERSITY
-  S2S GREEDY :  THE UNIVERSITY
-  JOINT BEAM :  THE UNIVERSITY
-  JOINT LM B :  THE UNIVERSITY
-  6 th hypothesis
-  CTC GREEDY :  HE KNOWS THEM BOTH
-  S2S GREEDY :  HE KNOWS THEM BOTH
-  JOINT BEAM :  HE KNOWS THEM BOTH
-  JOINT LM B :  HE KNOWS THEM BOTH
-  7 th hypothesis
-  CTC GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
-  S2S GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
-  JOINT BEAM :  A VOICE FROM BEYOND THE WORLD WAS CALLING
-  JOINT LM B :  A VOICE FROM BEYOND THE WORLD WAS CALLING
-  8 th hypothesis
-  CTC GREEDY :  THEN HE COMES TO THE BEAK OF IT SH
-  S2S GREEDY :  THEN HE COMES TO THE BEAK OF IT
-  JOINT BEAM :  THEN HE COMES TO THE BEAK OF IT
-  JOINT LM B :  THEN HE COMES TO THE BEAK OF IT
-
-  1 th hypothesis
-  CTC GREEDY :  TO DO THIS HE MUST SCHEMEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
-  S2S GREEDY :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE TO ESCAPE
-  JOINT BEAM :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
-  JOINT LM B :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
-  TRUE TRANS :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
-  2 th hypothesis
-  CTC GREEDY :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOWS A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOTS COAT AGAINST AND FACE APPEARED THE GAZE INTO THE ROOM BY INTENTION BUT TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
-  S2S GREEDY :  OH THOSE BARS HE MEANT TO GAZE THE BARS OF BOOTS A COUPLE OF HANDS SEIZED THE ASTONISHED COUNTENANCE OF THE WINDOW A COUPLE OF HANDS SEIZED THE ASTONISHED COUNTENANCE OF THE YOUNGSTER AND HE WAS A SCRATCHING OF BOOTS AGAINST THE ROOM BY INTENTION INSTEAD OF THE SCRATCHING OF BOOTS AGAINST THE ROOM BY INTENTION INSTEAD
-  JOINT BEAM :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM BUT JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOWS A COUPLE OF HANDS SEIZED THE BARS AND WAS A SCRATCHING OF BOOTS AGAINST THE ROOM AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT JUST AT THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
-  JOINT LM B :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM BUT JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOTS AGAINST THE STONES AND HE WENT TO GAZE INTO THE ROOM BY INTENTION AND THEN TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
-  TRUE TRANS :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARD THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOT TOES AGAINST STONE WORK AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT INTO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
-  3 th hypothesis
-  CTC GREEDY :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF ONCE MORE PRODUCING A GRAING GE OR SELL SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON FOR TWENTY HOURS HE WOULD NOT GET THROUGH
-  S2S GREEDY :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GREAT LITTLE IMPRESSION FOR TWENTY FOUR OR TWENTY FOUR OR TWENTY FOUR HOURS HE KEPT ON THE GREAT WAY OF THE WAY OF THE WAY OF THE SAME WAY FOR TWENTY OR A SOUND AS HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND A GREAT HOUR OR TWENTY OR TWENTY OR TWENTY OR TWENTY OR TWENTY OR TWENTY SOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE WOULD NOT GET THROUGH
-  JOINT BEAM :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRADING AND THE GEAR OF THE SELLING OF HIS SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON ONE FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
-  JOINT LM B :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRATING AND A GREAT DEAL OF THE SOUND AS HE FOUND THAT HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON HIS WAY FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
-  TRUE TRANS :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRATING EAR ASSAILING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
-  4 th hypothesis
-  CTC GREEDY :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
-  S2S GREEDY :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES WITH BUT A LITTLE PROVISION LEFT AND AFTER A LITTLE PROVISION LEFT AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT AND ABODE ALONE ON THE LAST OF THE ISLAND TILL I WHO WAS WONT TO HAVE SO MUCH
-  JOINT BEAM :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE ISLAND AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
-  JOINT LM B :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE ISLAND AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
-  TRUE TRANS :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
-  5 th hypothesis
-  CTC GREEDY :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINBA THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FORWARD IT BUT WE CARRY WITH US SENT HIM OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
-  S2S GREEDY :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING AND HAD TAKEN SOME REST AND HAD TAKEN SEAMANIANS AND HAD TAKEN SOME REST AND HAD TAKEN SEAMAN AND AUSPICIOUS KING AND A'AMUS AND CONTINUED THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
-  JOINT BEAM :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN AND HAD TAKEN WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABUSCINIANS THAT HAD TAKEN SOME REST THEY CONSULTED AMONGST THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH USEND HIM OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
-  JOINT LM B :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN AND THAT SINDBAD WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABUSCINIANS AND HAD TAKEN SOME REST AND CONSULTED AMONGST THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US ACQUAINT HIM WITH OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
-  TRUE TRANS :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US AND PRESENT HIM TO OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
-  '''
-
+  audio_files=[]
   audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7902/96591/7902-96591-0015.flac')
   audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7902/96592/7902-96592-0014.flac')
   audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7902/96592/7902-96592-0030.flac')
+  iterators.append(audio_files)
+
+  audio_files=[]
   audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7018/75788/7018-75788-0018.flac')
   audio_files.append('/workspace/librispeech_audio_data/LibriSpeech/test-other/7018/75789/7018-75789-0011.flac')
+  iterators.append(audio_files)
+
+  audio_files=[]
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0000.flac')
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0001.flac')
+
+  audio_files=[]
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0002.flac')
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0003.flac')
+  iterators.append(audio_files)
+
+  audio_files=[]
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0004.flac')
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0005.flac')
+
+  audio_files=[]
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0006.flac')
+  audio_files.append('/workspace/seosh_speechbrain/inference_experiment/291468/7601-291468-0007.flac')
+  iterators.append(audio_files)
+
+  for audio_files in iterators:
+    sigs=[]
+    lens=[]
+    for audio_file in audio_files:
+      snt, fs = torchaudio.load(audio_file)
+      sigs.append(snt.squeeze())
+      lens.append(snt.shape[1])
+
+    batch = pad_sequence(sigs, batch_first=True, padding_value=0.0)
+    lens = torch.Tensor(lens) / batch.shape[1]
+
+    encoder_input = dict()
+    encoder_input['source'] = batch
+    encoder_input['padding_mask'] = (batch==0)
+    encoder_input = utils.apply_to_sample(apply_half, encoder_input)
+    encoder_input = utils.move_to_cuda(encoder_input)
+
+    #####################################################
+    ######################## CTC ########################
+    #####################################################
+    
+    with torch.no_grad():
+      ctc_encoder_out = ctc_model(**encoder_input)
+    logits = ctc_encoder_out['encoder_out']
+    lprobs = utils.log_softmax(logits.float(), dim=-1)
+    ctc_emissions = lprobs.transpose(0, 1).float().cpu().contiguous()
+
+    #####################################################
+    ######################## AED ########################
+    #####################################################
+    
+    with torch.no_grad():
+      aed_encoder_out = aed_model.encoder(**encoder_input)
+      # aed_greedy_predicted_tokens = greedy_decoding(aed_model, tgt_dict, aed_encoder_out)
+      aed_greedy_predicted_tokens, _, _ = aed_model.greedy_decoding(tgt_dict, tgt_dict.eos(), {'net_input' : encoder_input}, aed_encoder_out)
+    # Tra()
+
+    #####################################################
+    ####################### Joint #######################
+    #####################################################
+
+    with torch.no_grad():
+      joint_encoder_out = joint_model.encoder(**encoder_input)
+    logits = joint_model.encoder.ctc_proj(joint_encoder_out["encoder_out_before_proj"])
+    lprobs = utils.log_softmax(logits.float(), dim=-1)
+    ctc_head_emissions = lprobs.transpose(0, 1).float().cpu().contiguous()
+
+    joint_encoder_out = utils.apply_to_sample(apply_half, joint_encoder_out)
+    joint_encoder_out = utils.move_to_cuda(joint_encoder_out)
+
+    wav_lens = utils.apply_to_sample(apply_half, lens)
+    wav_lens = utils.move_to_cuda(wav_lens)
+
+    with torch.no_grad():
+      # joint_aed_head_predicted_tokens = greedy_decoding(joint_model, tgt_dict, joint_encoder_out)
+      joint_aed_head_predicted_tokens, _, _ = joint_model.greedy_decoding(tgt_dict, tgt_dict.eos(), {'net_input' : encoder_input}, joint_encoder_out)
+      joint_predicted_tokens, scores = joint_decoder(joint_encoder_out, wav_lens)
+      joint_lm_predicted_tokens, scores = joint_decoder_with_lm(joint_encoder_out, wav_lens)
+
+
+    for i, (
+        ctc, 
+        aed, 
+        joint_ctc, 
+        joint_aed, 
+        joint, 
+        joint_lm
+        ) in enumerate(
+        zip(
+            ctc_emissions,
+            aed_greedy_predicted_tokens,
+            ctc_head_emissions, 
+            joint_aed_head_predicted_tokens, 
+            joint_predicted_tokens, 
+            joint_lm_predicted_tokens,
+            )
+        ):
+
+      ctc_g = get_ctc_pred(ctc, ctc_blank_idx)
+      pred_units = ctc_tgt_dict.string(ctc_g)
+      ctc_hypo = post_process(pred_units, 'letter')
+    #   ctc_hypo = tgt_dict.string(ctc_g, 'letter')
+
+      pred_units = tgt_dict.string(aed)
+      aed_hypo = post_process(pred_units, 'wordpiece')
+      
+      ctc_g = get_ctc_pred(joint_ctc, blank_idx)
+      pred_units = tgt_dict.string(ctc_g)
+      joint_ctc_hypo = post_process(pred_units, 'wordpiece')
+
+      pred_units = tgt_dict.string(joint_aed)
+      joint_aed_greedy_hypo = post_process(pred_units, 'wordpiece')
+
+      pred_units = tgt_dict.string(joint)
+      joint_hypo = post_process(pred_units, 'wordpiece')
+
+      pred_units = tgt_dict.string(joint_lm)
+      joint_lm_hypo = post_process(pred_units, 'wordpiece')
+
+      print("="*15)
+      print('{} th hypothesis'.format(i+1))
+
+      print('Vanilla CTC     : ', ctc_hypo)
+      print('Vanilla AED     : ', aed_hypo)
+      print('-'*15)
+
+      print('CTC HEAD IN JNT : ', joint_ctc_hypo)
+      print('GREEDY IN JNT   : ', joint_aed_greedy_hypo)
+      print('JOINT BEAM      : ', joint_hypo)
+      print('JOINT LM BEAM   : ', joint_lm_hypo)
+      print("="*15)
+      print()
+
+    '''
+    (py38) root@557bec2a5c9d:/workspace/seosh_speechbrain/inference_experiment# python fairseq_inference.py 
+    Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
+    2022-07-25 02:32:40 | INFO | fairseq.tasks.language_modeling | dictionary: 10001 types
+    Warning !!! Original Implementation does not allow to assign same index to bos token and eos token !!!
+
+    1 th hypothesis
+    CTC GREEDY :  BEWARE OF MAKING THAT MISTAKE
+    S2S GREEDY :  BEWARE OF MAKING THAT MISTAKE
+    JOINT BEAM :  BEWARE OF MAKING THAT MISTAKE
+    JOINT LM B :  BEWARE OF MAKING THAT MISTAKE
+    2 th hypothesis
+    CTC GREEDY :  HE TRIED TO THINK HOW IT COULD BE
+    S2S GREEDY :  HE TRIED TO THINK HOW IT COULD BE
+    JOINT BEAM :  HE TRIED TO THINK HOW IT COULD BE
+    JOINT LM B :  HE TRIED TO THINK HOW IT COULD BE
+    3 th hypothesis
+    CTC GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    S2S GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    JOINT BEAM :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    JOINT LM B :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    4 th hypothesis
+    CTC GREEDY :  HE COULD WAIT NO LONGER
+    S2S GREEDY :  HE COULD WAIT NO LONGER
+    JOINT BEAM :  HE COULD WAIT NO LONGER
+    JOINT LM B :  HE COULD WAIT NO LONGER
+    5 th hypothesis
+    CTC GREEDY :  THE UNIVERSITY
+    S2S GREEDY :  THE UNIVERSITY
+    JOINT BEAM :  THE UNIVERSITY
+    JOINT LM B :  THE UNIVERSITY
+    6 th hypothesis
+    CTC GREEDY :  HE KNOWS THEM BOTH
+    S2S GREEDY :  HE KNOWS THEM BOTH
+    JOINT BEAM :  HE KNOWS THEM BOTH
+    JOINT LM B :  HE KNOWS THEM BOTH
+    7 th hypothesis
+    CTC GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    S2S GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    JOINT BEAM :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    JOINT LM B :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    8 th hypothesis
+    CTC GREEDY :  THEN HE COMES TO THE BEAK OF IT SH
+    S2S GREEDY :  THEN HE COMES TO THE BEAK OF IT
+    JOINT BEAM :  THEN HE COMES TO THE BEAK OF IT
+    JOINT LM B :  THEN HE COMES TO THE BEAK OF IT
+
+    1 th hypothesis
+    CTC GREEDY :  TO DO THIS HE MUST SCHEMEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    S2S GREEDY :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE TO ESCAPE
+    JOINT BEAM :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    JOINT LM B :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS THE BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    TRUE TRANS :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    2 th hypothesis
+    CTC GREEDY :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOWS A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOTS COAT AGAINST AND FACE APPEARED THE GAZE INTO THE ROOM BY INTENTION BUT TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    S2S GREEDY :  OH THOSE BARS HE MEANT TO GAZE THE BARS OF BOOTS A COUPLE OF HANDS SEIZED THE ASTONISHED COUNTENANCE OF THE WINDOW A COUPLE OF HANDS SEIZED THE ASTONISHED COUNTENANCE OF THE YOUNGSTER AND HE WAS A SCRATCHING OF BOOTS AGAINST THE ROOM BY INTENTION INSTEAD OF THE SCRATCHING OF BOOTS AGAINST THE ROOM BY INTENTION INSTEAD
+    JOINT BEAM :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM BUT JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOWS A COUPLE OF HANDS SEIZED THE BARS AND WAS A SCRATCHING OF BOOTS AGAINST THE ROOM AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT JUST AT THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    JOINT LM B :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM BUT JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOTS AGAINST THE STONES AND HE WENT TO GAZE INTO THE ROOM BY INTENTION AND THEN TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    TRUE TRANS :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARD THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOT TOES AGAINST STONE WORK AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT INTO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    3 th hypothesis
+    CTC GREEDY :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF ONCE MORE PRODUCING A GRAING GE OR SELL SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON FOR TWENTY HOURS HE WOULD NOT GET THROUGH
+    S2S GREEDY :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GREAT LITTLE IMPRESSION FOR TWENTY FOUR OR TWENTY FOUR OR TWENTY FOUR HOURS HE KEPT ON THE GREAT WAY OF THE WAY OF THE WAY OF THE SAME WAY FOR TWENTY OR A SOUND AS HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND THAT NOW HE FOUND A GREAT HOUR OR TWENTY OR TWENTY OR TWENTY OR TWENTY OR TWENTY OR TWENTY SOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE FOUND AS HE WOULD NOT GET THROUGH
+    JOINT BEAM :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRADING AND THE GEAR OF THE SELLING OF HIS SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON ONE FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
+    JOINT LM B :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRATING AND A GREAT DEAL OF THE SOUND AS HE FOUND THAT HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON HIS WAY FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
+    TRUE TRANS :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRATING EAR ASSAILING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
+    4 th hypothesis
+    CTC GREEDY :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    S2S GREEDY :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES WITH BUT A LITTLE PROVISION LEFT AND AFTER A LITTLE PROVISION LEFT AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT AND ABODE ALONE ON THE LAST OF THE ISLAND TILL I WHO WAS WONT TO HAVE SO MUCH
+    JOINT BEAM :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE ISLAND AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    JOINT LM B :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE ISLAND AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    TRUE TRANS :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    5 th hypothesis
+    CTC GREEDY :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINBA THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FORWARD IT BUT WE CARRY WITH US SENT HIM OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    S2S GREEDY :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING AND HAD TAKEN SOME REST AND HAD TAKEN SEAMANIANS AND HAD TAKEN SOME REST AND HAD TAKEN SEAMAN AND AUSPICIOUS KING AND A'AMUS AND CONTINUED THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    JOINT BEAM :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN AND HAD TAKEN WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABUSCINIANS THAT HAD TAKEN SOME REST THEY CONSULTED AMONGST THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH USEND HIM OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    JOINT LM B :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN AND THAT SINDBAD WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABUSCINIANS AND HAD TAKEN SOME REST AND CONSULTED AMONGST THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US ACQUAINT HIM WITH OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    TRUE TRANS :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US AND PRESENT HIM TO OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+
+    1 th hypothesis
+    CTC GREEDY :  BEWARE OF MAKING THAT MISTAKE
+    S2S GREEDY :  BEWARE OF MAKING THAT MISTAKE
+
+    2 th hypothesis
+    CTC GREEDY :  HE TRIED TO THINK HOW IT COULD BE
+    S2S GREEDY :  HE TRIED TO THINK HOW IT COULD BE
+
+    3 th hypothesis
+    CTC GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    S2S GREEDY :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+
+    4 th hypothesis
+    CTC GREEDY :  HE COULD WAIT NO LONGER
+    S2S GREEDY :  HE COULD WAIT NO LONGER
+
+    5 th hypothesis
+    CTC GREEDY :  THE UNIVERSITY
+    S2S GREEDY :  THE UNIVERSITY
+
+    6 th hypothesis
+    CTC GREEDY :  HE KNOWS THEM BOTH
+    S2S GREEDY :  HE KNOWS THEM BOTH
+
+    7 th hypothesis
+    CTC GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    S2S GREEDY :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+
+    8 th hypothesis
+    CTC GREEDY :  THEN HE COMES TO THE BEAK OF IT
+    S2S GREEDY :  THEN HE COMES TO THE BEAK OF IT
+
+    1 th hypothesis
+    CTC GREEDY :  TO DO THIS HE MUST SCHEME FOR LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    S2S GREEDY :  TO DO THIS HE MUST SCHEME FOR LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE AND AND
+
+    2 th hypothesis
+    CTC GREEDY :  OH THOSE BARS HE MENTALALLY EXCLAIMED AND HE ADVANCING THEM THERE WAS A SCRATCH JUST AS HE DREW THERE WAS A NOISE THE BY COUNTENANCE OF THE MIDSHIPMAN
+    S2S GREEDY :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW BY INTENTION BUT INTO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+
+    3 th hypothesis
+    CTC GREEDY :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW THE THOUGH THOUGH THAT THAT THE THE MORE AS SOUNDING KEPT FOR TWENTY HOURS HE WOULD NOT GET THROUGH
+    S2S GREEDY :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE IF HE KEPT A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING A GRATING AND WORKING WELL FOR TWENTY FOUR HOURS HE WOULD NOT GET THROUGH
+
+    4 th hypothesis
+    CTC GREEDY :  EACH THAT DIED WE WASHED AND SHROUDED IN LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE OF AND ALONE ON THE THE BUT A LITTLE THE PROVISION BURIED I WHO WAS WONT TO HAVE SO MUCH
+    S2S GREEDY :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY TILL I HAD BURIED THE LAST OF THE PARTY TILL I HAD BURIED THE LAST OF THE PARTY TILL I WHO WAS WONT TO HAVE SO MUCH
+
+    5 th hypothesis
+    CTC GREEDY :  SHE SAID IT HATH SOME REACHED ME O AUSPICIOUS KING HIS AND THE AND THEST AMONG CONSULTED AMONG HIM THEMSELVES THEMSELVES AND SAID HIM TO TO ONE ANOTHER NO THAT BUT MAY AINT HIM WITH HIS THE AND
+    S2S GREEDY :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING AND HAD TAKEN SOME REST THEY LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABSINIANS AND ABASINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FORWARD BUT WE CARRY HIM WITH HIS ADVENTURES
+
+    1 th hypothesis
+    CTC GREEDY :  WHEN THE LOFTY THEID HIS HISTORY ABOUT TO ENTER GOING TO BE EXCEEDINGLY UPON HIS UPON OF OF A A THE TO A THIS WILL GIVE A A AND THAT AGREEABLE
+    S2S GREEDY :  WHEN THE LOFTY THUCIDIDIDIDIDIDIDIDIAN WITH THAT THE HISTORY IS NOW GOING TO BE EXCEEDINGLY SMALL UPON HIS DESCRIPTION OF THE PLAGUE ONE OF HIS MODERN COMMENTATORS ASSURES THE BEGGAR THAT THE HISTORY IS NOW GOING TO BE EXCEEDINGLY SOLEMN ONE OF HIS DESCRIPTION OF THE PLAGUE ONE OF HIS MODERN COMMENTATORS ASSURES THE PLAGUE AND HINTS THAT THIS PLAGUE WILL GIVE HIS PLAGUE WILL GIVE HIS HISTORY A MOST AGREEABLE VARIETY
+
+    2 th hypothesis
+    CTC GREEDY :  SUCH ARE THE TRUE SUBJECTS FOR THE HISTORIC PEN
+    S2S GREEDY :  SUCH ARE THE TRUE SUBJECTS FOR THE HISTORIC PEN SUCH ARE THE SUCH SUCH SUCH SUCH SUCH SUCH FOR THE HISTORIC PEN SUCH SUCH SUCH
+
+    3 th hypothesis
+    CTC GREEDY :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    S2S GREEDY :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+
+    4 th hypothesis
+    CTC GREEDY :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXCC FLIES ARE CREATED FOR THE SUSTENANCE OF VERINS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    S2S GREEDY :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+
+    1 th hypothesis
+    CTC GREEDY :  ANCIENT TRADITIONS SPEAK MUCH OF HIS LEARNING AND OF THE GALLANT HOST OF INADS HE HAD MADE HAR BROUGHTS THE A AND WHICH HE WAS WAS TOS YE MUCH HISIA OMA
+    S2S GREEDY :  ANCIENT TRADITIONS SPEAK MUCH OF HIS LEARNING AND OF THE GALLANT INROADS HE HAD MADE INTO THE DEAD LANGUAGES AND APOTHEGMS IN WHICH HE HAD MADE CAPTIVE WITH YORE HIS SPOLIDAHOES AND APOTHEGMOUS AND LATIN VERBS AND APOTHEGMOUS BOOTY IN HIS SPOLIO
+
+    2 th hypothesis
+    CTC GREEDY :  IT WAS OBSERVED HOWEVER THAT HE SELDOM GOT INTO AN ARGUMENT WITHOUT GETTING INTO A PERPLEXITY AND THEN INTO A PASSION WITH HIS ADVERSARY FOR NOT BEING CONVINCED GRATU
+    S2S GREEDY :  IT WAS OBSERVED HOWEVER THAT HE SELDOM GOT INTO AN ARGUMENT WITHOUT GETTING INTO A PERPLEXITY AND THEN INTO A PASSION WITH HIS ADVERSARY FOR NOT BEING CONVINCED GRATUS AND
+
+    3 th hypothesis
+    CTC GREEDY :  HIS ABODE ASTONISHED THES THAT SOON ABOUT HIS THE TO THE OR
+    S2S GREEDY :  HIS ABODE HIS ABODE AND FOUNDED MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE HORSE TO WORK THE HORSE TO WORK THE CARTS THAT WENT BEFORE THE HORSE TO WORK JUST WITHOUT FIRE PATENT SMOKES THAT WENT BEFORE THE HORSE'S SEAT WITHOUT FIRE A PART'S THAT WENT BEFORE THE HORSE'S THAT WENT BEFORE THE HORSE'S SEAT WITHOUT FIRE OR COUNTRY OR COUNTRY OR COUNTRY
+
+    4 th hypothesis
+    CTC GREEDY :  IT IS IN KNOWLEDGE AND AS ATTRACTS MORE SWIMMING ATTENTION HE WHO THE FLOUNDERS DIVR WHO QUIETLY SPLASH DIVES ON THE MAKES MORE OF TREASURES TO THE BOTTOM DIVES ON OF SURFACE THE
+    S2S GREEDY :  IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND ATTRACTS IN QUEST OF TREASURES IN QUEST OF TREASURES IN QUEST OF TREASURES TO THE BOTTOM
+
+
+    ## 221001
+    ===============                                                                                                                                                                                                                                                                                              [87/45969]
+    1 th hypothesis
+    Vanilla CTC     :  BEWARE OF MAKING THAT MISTAKE
+    Vanilla AED     :  BEWARE OF MAKING THAT MISTAKE
+    ---------------
+    CTC HEAD IN JNT :  BEWARE OF MAKING THAT MISTAKE
+    GREEDY IN JNT   :  BEWARE OF MAKING THAT MISTAKE
+    JOINT BEAM      :  BEWARE OF MAKING THAT MISTAKE
+    JOINT LM BEAM   :  BEWARE OF MAKING THAT MISTAKE
+    ===============
+
+    ===============
+    2 th hypothesis
+    Vanilla CTC     :  HE TRIED TO THINK HOW IT COULD BE
+    Vanilla AED     :  HE TRIED TO THINK HOW IT COULD BE
+    ---------------
+    CTC HEAD IN JNT :  HE TRIED TO THINK HOW IT COULD BE
+    GREEDY IN JNT   :  HE TRIED TO THINK HOW IT COULD BE
+    JOINT BEAM      :  HE TRIED TO THINK HOW IT COULD BE
+    JOINT LM BEAM   :  HE TRIED TO THINK HOW IT COULD BE
+    ===============
+
+    ===============
+    3 th hypothesis
+    Vanilla CTC     :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    Vanilla AED     :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    ---------------
+    CTC HEAD IN JNT :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    GREEDY IN JNT   :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    JOINT BEAM      :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    JOINT LM BEAM   :  A COLD LUCID INDIFFERENCE REIGNED IN HIS SOUL
+    ===============
+
+    ===============
+    4 th hypothesis
+    Vanilla CTC     :  HE COULD WAIT NO LONGER
+    Vanilla AED     :  HE COULD WAIT NO LONGER
+    ---------------
+    CTC HEAD IN JNT :  HE COULD WAIT NO LONGER
+    GREEDY IN JNT   :  HE COULD WAIT NO LONGER
+    JOINT BEAM      :  HE COULD WAIT NO LONGER
+    JOINT LM BEAM   :  HE COULD WAIT NO LONGER
+    ===============
+
+    ===============
+    5 th hypothesis
+    Vanilla CTC     :  THE UNIVERSITY
+    Vanilla AED     :  THE UNIVERSITY THE
+    ---------------
+    CTC HEAD IN JNT :  THE UNIVERSITY
+    GREEDY IN JNT   :  THE UNIVERSITY THE UNIVERSITY THE UNIVERSITY
+    JOINT BEAM      :  THE UNIVERSITY
+    JOINT LM BEAM   :  THE UNIVERSITY
+    ===============
+
+    ===============
+    6 th hypothesis
+    Vanilla CTC     :  HE KNOWS THEM BOTH
+    Vanilla AED     :  HE KNOWS THEM BOTH
+    ---------------
+    CTC HEAD IN JNT :  HE KNOWS THEM BOTH
+    GREEDY IN JNT   :  HE KNOWS THEM BOTH HE KNOWS THEM BOTH
+    JOINT BEAM      :  HE KNOWS THEM BOTH
+    JOINT LM BEAM   :  HE KNOWS THEM BOTH
+    ===============
+
+    ===============
+    7 th hypothesis
+    Vanilla CTC     :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    Vanilla AED     :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    ---------------
+    CTC HEAD IN JNT :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    GREEDY IN JNT   :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    JOINT BEAM      :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    JOINT LM BEAM   :  A VOICE FROM BEYOND THE WORLD WAS CALLING
+    ===============
+
+    ===============
+    8 th hypothesis
+    Vanilla CTC     :  THEN HE COMES TO THE BEAK OF IT
+    Vanilla AED     :  THEN HE COMES TO THE BEAK OF IT
+    ---------------
+    CTC HEAD IN JNT :  THEN HE COMES TO THE BEAK OF IT
+    GREEDY IN JNT   :  THEN HE COMES TO THE BEAK OF IT
+    JOINT BEAM      :  THEN HE COMES TO THE BEAK OF IT
+    JOINT LM BEAM   :  THEN HE COMES TO THE BEAK OF IT
+    ===============
+
+    ===============
+    1 th hypothesis
+    Vanilla CTC     :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AN SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    Vanilla AED     :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE TO ESCAPE FOR HELP FOR HELP UNLESS A ESCAPE FOR HELP FOR HELP UNLESS A BOAT
+    ---------------
+    CTC HEAD IN JNT :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    GREEDY IN JNT   :  TO DO THIS HE MUST SCHEME LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE TO TO TO TO ESCAPE TO TO TO TO TO TO LIE HID TILL MORNING THEN
+    JOINT BEAM      :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    JOINT LM BEAM   :  TO DO THIS HE MUST SCHEM LIE HID TILL MORNING THEN MAKE FOR THE NEAREST POINT AND SIGNAL FOR HELP UNLESS A BOAT'S CREW WERE ALREADY SEARCHING FOR HIM HOW TO ESCAPE
+    ===============
+
+    ===============
+    2 th hypothesis
+    Vanilla CTC     :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOT TOES AGAINST TONE WORK CAND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT 
+    INTO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    Vanilla AED     :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A SCRATCHING OF BOOT TOES AGAINST THE ROOM BY INTENTION BUT IN TO THE ASTONISHED FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT IN TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHI
+    PMAN INSTEAD
+    ---------------
+    CTC HEAD IN JNT :  OH THOSE BARS HE THEY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOT TOES AGAINST STONEWORK AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT THE A
+    STONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    GREEDY IN JNT   :  OH THOSE BARS HE MEANT TO BE EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A RUSTLING NOISE UNDER THE WINDOW AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT INTO THE
+    ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    JOINT BEAM      :  OH THOSE BARS HE MEANT TOLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOT TOES AGAINST STONE WORK AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BU
+    T IN TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    JOINT LM BEAM   :  OH THOSE BARS HE MENTALLY EXCLAIMED AND HE WAS ADVANCING TOWARDS THEM WHEN JUST AS HE DREW NEAR THERE WAS A RUSTLING NOISE UNDER THE WINDOW A COUPLE OF HANDS SEIZED THE BARS THERE WAS A SCRATCHING OF BOOT TOES AGAINST STONE WORK AND RAM'S FACE APPEARED TO GAZE INTO THE ROOM BY INTENTION BUT 
+    IN TO THE ASTONISHED COUNTENANCE OF THE YOUNG MIDSHIPMAN INSTEAD
+    ===============
+
+    ===============
+    3 th hypothesis
+    Vanilla CTC     :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRADING EAR A SELLING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS H
+    E WOULD NOT GET THROUGH
+    Vanilla AED     :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRATING EAR A SELLING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS H
+    E WOULD NOT GET THROUGH
+    ---------------
+    CTC HEAD IN JNT :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRAING EAR A SELLING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS HE
+    WOULD NOT GET THROUGH
+    GREEDY IN JNT   :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRATING EAR A SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION ONCE MORE FOR TWENTY FOUR HOURS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS HE WOULD NOT GET TH
+    ROUGH THE
+    JOINT BEAM      :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRADING EAR A SELLING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS H
+    E WOULD NOT GET THROUGH
+    JOINT LM BEAM   :  THE RESULT WAS NOT VERY SATISFACTORY BUT SUFFICIENTLY SO TO MAKE HIM ESSAY THE BAR OF THE WINDOW ONCE MORE PRODUCING A GRADING EAR A SELLING SOUND AS HE FOUND THAT NOW HE DID MAKE A LITTLE IMPRESSION SO LITTLE THOUGH THAT THE PROBABILITY WAS IF HE KEPT ON WORKING WELL FOR TWENTY FOUR HOURS H
+    E WOULD NOT GET THROUGH
+    ===============
+
+    ===============
+    1 th hypothesis
+    Vanilla CTC     :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    Vanilla AED     :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE I
+    SLAND WITH BUT I WHO WAS WONT TO HAVE SO MUCH
+    ---------------
+    CTC HEAD IN JNT :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    GREEDY IN JNT   :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY TILL I HAD BURIED THE LAST OF THE PARTY TILL I WHO WAS WONT TO HAVE SO MUCH EACH EACH EACH I I
+    I I I I I I I I I I I HAD SO MUCH
+    JOINT BEAM      :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    JOINT LM BEAM   :  EACH THAT DIED WE WASHED AND SHROUDED IN SOME OF THE CLOTHES AND LINEN CAST ASHORE BY THE TIDES AND AFTER A LITTLE THE REST OF MY FELLOWS PERISHED ONE BY ONE TILL I HAD BURIED THE LAST OF THE PARTY AND ABODE ALONE ON THE ISLAND WITH BUT A LITTLE PROVISION LEFT I WHO WAS WONT TO HAVE SO MUCH
+    ===============
+
+    ===============
+    2 th hypothesis
+    Vanilla CTC     :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US AND PRESENT HIM T
+    O OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    Vanilla AED     :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABUSINIANS THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE MAY ACQUAINT HIM WITH HIS 
+    ADVENTURES
+    ---------------
+    CTC HEAD IN JNT :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US AND PRESENT HIM T
+    O OUR KING THAT HE MAY ACQUAINT WITH HIS ADVENTURES
+    GREEDY IN JNT   :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS THAT SINBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABASTINIANS THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES 
+    SHE SHE SHE THAT AND AND AND AND AND AND AND AND AND AND AND
+    JOINT BEAM      :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABASINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONG THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US AND PRESENTI TO O
+    UR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    JOINT LM BEAM   :  SHE SAID IT HATH REACHED ME O AUSPICIOUS KING THAT SINDBAD THE SEAMAN CONTINUED WHEN I LANDED AND FOUND MYSELF AMONGST THE INDIANS AND ABYSSINIANS AND HAD TAKEN SOME REST THEY CONSULTED AMONGST THEMSELVES AND SAID TO ONE ANOTHER THERE IS NO HELP FOR IT BUT WE CARRY HIM WITH US AND PRESENT HI
+    M TO OUR KING THAT HE MAY ACQUAINT HIM WITH HIS ADVENTURES
+    ===============
+
+    ===============
+    1 th hypothesis
+    Vanilla CTC     :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    Vanilla AED     :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    ---------------
+    CTC HEAD IN JNT :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    GREEDY IN JNT   :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN THE THE THE THE THE THE THE THE THE THE
+    JOINT BEAM      :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    JOINT LM BEAM   :  THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    ===============
+
+    ===============
+    2 th hypothesis
+    Vanilla CTC     :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    Vanilla AED     :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    ---------------
+    CTC HEAD IN JNT :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    GREEDY IN JNT   :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES THUS THUS THUS THUS THUS THUS THUS THUS THUS THUS
+    JOINT BEAM      :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    JOINT LM BEAM   :  THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    ===============
+
+
+    ===============
+    1 th hypothesis
+    Vanilla CTC     :  HIS ABODE WHICH HE HAD FIXED AT A BOWERY OR COUNTRY SEAT AT A SHORT DISTANCE FROM THE CITY JUST AT WHAT IS NOW CALLED DUTCH STREET SOON ABOUNDED WITH PROOFS OF HIS INGENUITY PATENT SMOKE JACKS THAT RECUIRED A HORSE TO WORK THEM DUTCH OVENS THAT RORSTED MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE HORSES WEATHER COCKS THAT TURNED AGAINST THE WIND AND OTHER WRONG HEADED CONTRIVANCES THAT ASETONISHED AND CONFOUNDED ALL BEHOLDERS
+    Vanilla AED     :  HIS ABODE WHICH HE HAD FIXED AT A BOWERY PATENTED MEAT WITHOUT FIRE CARTS THAT REQUIRED A HORSE TO WORK THE MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE HORSES THAT ASTONISHED AND CONFOUNDEDLY CONTRIVANCES AT A SHORT DISTANCE FROM THE CITY THAT ASTONISHED AND CONFOUNDED ALL BEHOLDERS
+    ---------------
+    CTC HEAD IN JNT :  HIS ABODE WHICH HE HAD FIXED AT A BOWERY OR COUNTRY SEAT AT A SHORT DISTANCE FROM THE CITY WHAT IS NOW CALLED DUTCH STREET SOON ABOUNDED WITH PROOFS OF HIS INGENUITY PATENT SMOKE JACKS THAT REQUIRED A HORSES HORSE TO WORK DUTCH OVENS THAT ROASTED MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE WEATHER COCKS THAT TURNED AGAINST THE WIND AND OTHER WRONG HEADED CONTRIVANCES THAT ASTONISHED AND CONFOUNDED ALL BEHOLDERS
+    GREEDY IN JNT   :  HIS ABODES THAT WENT BEFORE THE HORSE TO WORK JACKS THAT WENT BEFORE THE HORSE TO HORSE TO WORK'S THAT TURNED AGAINST THE WIND AND OTHER WRONG HEADED CONTRIVANCES AT A SHORT DISTANCE FROM THE CITY THAT ASTONISHED AND CONFOUNDED CONTRIVANCES HIS ABODEERS HIS
+    JOINT BEAM      :  HIS ABODE WHICH HE HAD FIXED AT A BOWERY OR COUNTRY SEAT AT A SHORT DISTANCE FROM THE CITY THAT WHAT IT IS NOW CALLED DUTCH STREET SOON ABOUNDED WITH PROOFS OF HIS INGENUITY PATENT SMOKE JACKS THAT REQUIRED A HORSE TO WORK'S THEM DUTCH OVENS THAT ROASTED MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE WEATHER COCKS THAT TURNED AGAINST THE WIND AND OTHER WRONG HEADED CONTRIVANCES THAT ASTONISHED AND CONFOUNDED ALL BEHOLDERS
+    JOINT LM BEAM   :  HIS ABODE WHICH HE HAD FIXED AT A BOWERY OR COUNTRY SEAT AT A SHORT DISTANCE FROM THE CITY THAT WAS NOW CALLED DUTCH STREET SOON ABOUNDED WITH PROOFS OF HIS INGENUITY PATENT SMOKE JACKS THAT REQUIRED A HORSE TO WORK THEM DUTCH OVENS THAT ROASTED MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE WEATHER COCKS THAT TURNED AGAINST THE WIND AND OTHER WRONG HEADED CONTRIVANCES THAT ASTONISHED AND CONFOUNDED ALL BEHOLDERS
+    ===============
+
+    ===============
+    2 th hypothesis
+    Vanilla CTC     :  IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AN SPLASHES ON THE SURFACE MAKES MORE NOISE AND ATTRACTS MORE ATTENTION THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES TO THE BOTTOM
+    Vanilla AED     :  IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AND SPLASHES IN QUEST OF TREASURES MAKES MORE NOISE AND ATTRACTS MORE ATTENTION THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES TO THE BOTTOM WHO QUIETLY DIVE THE BOTTOM WHO QUIETLY DIVE WHO THE BOTTOM
+    ---------------
+    CTC HEAD IN JNT :  IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND ATTRACTS MORE ATTENTION THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES TO THE BOTTOM
+    GREEDY IN JNT   :  IT IS IN KNOWLEDGE AS IN SWIMMING THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES MAKES MORE NOISE AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND SPLASHES ON THE QUEST OF TREASURES TO THE BOTTOM
+    JOINT BEAM      :  IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND ATTRACTS MORE ATTENTION THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES TO THE BOTTOM
+    JOINT LM BEAM   :  IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND ATTRACTS MORE ATTENTION THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES TO THE BOTTOM
+    ===============
+
+
+    ## 220903 (SAT) 5.1 decoder WER, joint 0.3 seq2seq model inference  
+    (py38) root@557bec2a5c9d:/workspace/seosh_speechbrain/inference_experiment/291468# cat 7601-291468.trans.txt
+    7601-291468-0000   WHEN THE LOFTY THUCYDIDES IS ABOUT TO ENTER UPON HIS DESCRIPTION OF THE PLAGUE THAT DESOLATED ATHENS ONE OF HIS MODERN COMMENTATORS ASSURES THE READER THAT THE HISTORY IS NOW GOING TO BE EXCEEDINGLY SOLEMN SERIOUS AND PATHETIC AND HINTS WITH THAT AIR OF CHUCKLING GRATULATION WITH WHICH A GOOD DAME DRAWS FORTH A CHOICE MORSEL FROM A CUPBOARD TO REGALE A FAVORITE THAT THIS PLAGUE WILL GIVE HIS HISTORY A MOST AGREEABLE VARIETY
+    7601-291468-0001   SUCH ARE THE TRUE SUBJECTS FOR THE HISTORIC PEN
+    7601-291468-0002   THE FALL OF EMPIRES THE DESOLATION OF HAPPY COUNTRIES SPLENDID CITIES SMOKING IN THEIR RUINS THE PROUDEST WORKS OF ART TUMBLED IN THE DUST THE SHRIEKS AND GROANS OF WHOLE NATIONS ASCENDING UNTO HEAVEN
+    7601-291468-0003   THUS THOSE SWARMS OF FLIES WHICH ARE SO OFTEN EXECRATED AS USELESS VERMIN ARE CREATED FOR THE SUSTENANCE OF SPIDERS AND SPIDERS ON THE OTHER HAND ARE EVIDENTLY MADE TO DEVOUR FLIES
+    7601-291468-0004   ANCIENT TRADITIONS SPEAK MUCH OF HIS LEARNING AND OF THE GALLANT INROADS HE HAD MADE INTO THE DEAD LANGUAGES IN WHICH HE HAD MADE CAPTIVE A HOST OF GREEK NOUNS AND LATIN VERBS AND BROUGHT OFF RICH BOOTY IN ANCIENT SAWS AND APOPHTHEGMS WHICH HE WAS WONT TO PARADE IN HIS PUBLIC HARANGUES AS A TRIUMPHANT GENERAL OF YORE HIS SPOLIA OPIMA
+    7601-291468-0005   IT WAS OBSERVED HOWEVER THAT HE SELDOM GOT INTO AN ARGUMENT WITHOUT GETTING INTO A PERPLEXITY AND THEN INTO A PASSION WITH HIS ADVERSARY FOR NOT BEING CONVINCED GRATIS
+    7601-291468-0006   HIS ABODE WHICH HE HAD FIXED AT A BOWERY OR COUNTRY SEAT AT A SHORT DISTANCE FROM THE CITY JUST AT WHAT IS NOW CALLED DUTCH STREET SOON ABOUNDED WITH PROOFS OF HIS INGENUITY PATENT SMOKE JACKS THAT REQUIRED A HORSE TO WORK THEM DUTCH OVENS THAT ROASTED MEAT WITHOUT FIRE CARTS THAT WENT BEFORE THE HORSES WEATHERCOCKS THAT TURNED AGAINST THE WIND AND OTHER WRONG HEADED CONTRIVANCES THAT ASTONISHED AND CONFOUNDED ALL BEHOLDERS
+    7601-291468-0007   IT IS IN KNOWLEDGE AS IN SWIMMING HE WHO FLOUNDERS AND SPLASHES ON THE SURFACE MAKES MORE NOISE AND ATTRACTS MORE ATTENTION THAN THE PEARL DIVER WHO QUIETLY DIVES IN QUEST OF TREASURES TO THE BOTTOM
+    '''
+
 
 def optimize_model(model, model_cfg) -> None:
   model.make_generation_fast_()
@@ -331,7 +764,7 @@ def greedy_decoding(model, tgt_dict, encoder_out):
 
         return prev_output_tokens
 
-def get_pred(e, blank_idx):
+def get_ctc_pred(e, blank_idx):
     toks = e.argmax(dim=-1).unique_consecutive()
     return toks[toks != blank_idx]
 

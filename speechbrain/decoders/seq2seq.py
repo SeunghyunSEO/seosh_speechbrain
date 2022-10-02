@@ -1430,7 +1430,8 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
 class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
     def __init__(
         self, 
-        model,
+        # model,
+        attention_decoder,
         ctc_layer, 
         temperature=1.0, 
         temperature_lm=1.0, 
@@ -1442,7 +1443,8 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         # self.fc = modules[1]
         # self.ctc_fc = modules[2]
 
-        self.model = model
+        # self.model = model
+        self.attention_decoder = attention_decoder
         self.ctc_fc = ctc_layer
 
         self.softmax = torch.nn.LogSoftmax(dim=-1)
@@ -1482,11 +1484,15 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         if self.lm_weight > 0:
             lm_memory = self.reset_lm_mem(batch_size * self.beam_size, device)
 
+        # Tra()
+
         if self.ctc_weight > 0:
             # (batch_size * beam_size, L, vocab_size)
+            # Tra()
             ctc_outputs = self.ctc_forward_step(enc_states.transpose(0, 1))
-            if ctc_outputs.dtype==torch.float16 :
-                ctc_outputs = ctc_outputs.transpose(0, 1).float().detach()
+            ctc_outputs = ctc_outputs.transpose(0, 1).float().detach()
+            # if ctc_outputs.dtype==torch.float16 :
+            #     ctc_outputs = ctc_outputs.transpose(0, 1).float().detach()
             ctc_scorer = CTCPrefixScorer(
                 ctc_outputs,
                 enc_lens,
@@ -1497,6 +1503,8 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                 self.ctc_window_size,
             )
             ctc_memory = None
+
+        # Tra()
 
         # Inflate the enc_states and enc_len by beam_size times
         enc_states = inflate_tensor(enc_states, times=self.beam_size, dim=0)
@@ -1755,7 +1763,8 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         # prob_dist = self.softmax(self.fc(pred) / self.temperature)
 
         memory = _update_mem(inp_tokens, memory)
-        result = self.model.decoder(prev_output_tokens = memory, encoder_out = encoder_out)
+        # result = self.model.decoder(prev_output_tokens = memory, encoder_out = encoder_out)
+        result = self.attention_decoder(prev_output_tokens = memory, encoder_out = encoder_out)
         prob_dist = self.softmax(result[0] / self.temperature)
         attn = result[1]['attn']
 
