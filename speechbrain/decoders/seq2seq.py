@@ -512,7 +512,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
                 hyps_and_scores[batch_id].append((hyp, log_probs, final_scores))
         return is_eos
 
-    def _get_top_score_prediction(self, hyps_and_scores, topk):
+    def _get_top_score_prediction(self, hyps_and_scores, topk, return_indices=False):
         """This method sorts the scores and return corresponding hypothesis and log probs.
 
         Arguments
@@ -536,6 +536,13 @@ class S2SBeamSearcher(S2SBaseSearcher):
         top_hyps, top_log_probs, top_scores, top_lengths = [], [], [], []
         batch_size = len(hyps_and_scores)
 
+        '''
+        (Pdb) len(hyps_and_scores); len(hyps_and_scores[0]); self.beam_size
+        7
+        2
+        2
+        '''
+
         # Collect hypotheses
         for i in range(len(hyps_and_scores)):
             hyps, log_probs, scores = zip(*hyps_and_scores[i])
@@ -550,19 +557,51 @@ class S2SBeamSearcher(S2SBaseSearcher):
         top_lengths = torch.tensor(
             top_lengths, dtype=torch.int, device=top_scores.device
         )
+
+        # Tra()
+        '''
+        (Pdb) top_hyps.size(); top_hyps; top_lengths
+        torch.Size([14, 92])
+        tensor([[  16, 5311,   38,  ...,    0,    0,    0],
+                [  16, 5311,   38,  ...,    0,    0,    0],
+                [ 270,   28, 1000,  ...,    0,    0,    0],
+                ...,
+                [  51,   11,  580,  ...,    8,   69,    2],
+                [   5,  685,    4,  ...,    0,    0,    0],
+                [   5,  685,    4,  ...,    0,    0,    0]], device='cuda:0')
+        tensor([89, 89, 82, 82, 82, 83, 62, 63, 90, 90, 89, 92, 66, 67],
+            device='cuda:0', dtype=torch.int32)
+        '''
+
+
         # Get topk indices
         topk_scores, indices = top_scores.topk(self.topk, dim=-1)
         indices = (indices + self.beam_offset.unsqueeze(1)).view(
             batch_size * self.topk
         )
+
+        # Tra()
+        '''
+        (Pdb) indices; top_hyps.size(); torch.index_select(top_hyps, dim=0, index=indices,).size()
+        tensor([ 0,  2,  4,  6,  8, 10, 12], device='cuda:0')
+        torch.Size([14, 92])
+        torch.Size([7, 92])
+        '''
+
+
         # Select topk hypotheses
         topk_hyps = torch.index_select(top_hyps, dim=0, index=indices,)
         topk_hyps = topk_hyps.view(batch_size, self.topk, -1)
+
         topk_lengths = torch.index_select(top_lengths, dim=0, index=indices,)
         topk_lengths = topk_lengths.view(batch_size, self.topk)
+
         topk_log_probs = [top_log_probs[index.item()] for index in indices]
 
-        return topk_hyps, topk_scores, topk_lengths, topk_log_probs
+        if return_indices:
+            return topk_hyps, topk_scores, topk_lengths, topk_log_probs, indices
+        else:
+            return topk_hyps, topk_scores, topk_lengths, topk_log_probs
 
     def forward(self, enc_states, wav_len):  # noqa: C901
         """Applies beamsearch and returns the predicted tokens."""
@@ -1427,6 +1466,11 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
 
 
 
+
+
+
+
+
 class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
     def __init__(
         self, 
@@ -1434,7 +1478,12 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         attention_decoder,
         ctc_layer, 
         temperature=1.0, 
-        temperature_lm=1.0, 
+        temperature_lm=1.0,
+        temperature_ctc=1.0,
+        fairseq_vocab=None,
+        lm_fairseq_vocab=None,
+        internal_lm_estimation=False,
+        internal_lm_weight=1.0,
         **kwargs,
     ):
         super(S2STransformerBeamSearchforFairseq, self).__init__(**kwargs)
@@ -1451,6 +1500,13 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
 
         self.temperature = temperature
         self.temperature_lm = temperature_lm
+        self.temperature_ctc = temperature_ctc
+
+        self.internal_lm_estimation = internal_lm_estimation
+        self.internal_lm_weight = internal_lm_weight
+
+        self.fairseq_vocab = fairseq_vocab
+        self.lm_fairseq_vocab = lm_fairseq_vocab
 
     def reset_mem(self, batch_size, device):
         """Needed to reset the memory during beamsearch."""
@@ -1484,11 +1540,8 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         if self.lm_weight > 0:
             lm_memory = self.reset_lm_mem(batch_size * self.beam_size, device)
 
-        # Tra()
-
         if self.ctc_weight > 0:
             # (batch_size * beam_size, L, vocab_size)
-            # Tra()
             ctc_outputs = self.ctc_forward_step(enc_states.transpose(0, 1))
             ctc_outputs = ctc_outputs.transpose(0, 1).float().detach()
             # if ctc_outputs.dtype==torch.float16 :
@@ -1504,11 +1557,18 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
             )
             ctc_memory = None
 
-        # Tra()
-
         # Inflate the enc_states and enc_len by beam_size times
         enc_states = inflate_tensor(enc_states, times=self.beam_size, dim=0)
         enc_lens = inflate_tensor(enc_lens, times=self.beam_size, dim=0)
+        
+        # Tra()
+        '''
+        (Pdb) ctc_outputs.size(); enc_states.size()
+        torch.Size([7, 1757, 10001])
+        torch.Size([35, 1757, 1024])
+
+        self.get_ctc_greedy_outs(ctc_outputs, self.blank_index)
+        '''
 
         # Using bos as the first input
         inp_tokens = (
@@ -1551,252 +1611,404 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         # This variable will be used when using_max_attn_shift=True
         prev_attn_peak = torch.zeros(batch_size * self.beam_size, device=device)
 
-        for t in range(max_decode_steps):
-            # terminate condition
-            if self._check_full_beams(hyps_and_scores, self.beam_size):
-                break
 
-            log_probs, memory, attn = self.forward_step(
-                inp_tokens, memory, encoder_out, enc_lens
-            )
-            log_probs = self.att_weight * log_probs
-
-            # Keep the original value
-            log_probs_clone = log_probs.clone().reshape(batch_size, -1)
-            vocab_size = log_probs.shape[-1]
-
-            if self.using_max_attn_shift:
-                # Block the candidates that exceed the max shift
-                cond, attn_peak = self._check_attn_shift(attn, prev_attn_peak)
-                log_probs = mask_by_condition(
-                    log_probs, cond, fill_value=self.minus_inf
-                )
-                prev_attn_peak = attn_peak
-
-            # Set eos to minus_inf when less than minimum steps.
-            if t < min_decode_steps:
-                log_probs[:, self.eos_index] = self.minus_inf
-                '''eos always have minus value?'''
-
-            # Set the eos prob to minus_inf when it doesn't exceed threshold.
-            if self.using_eos_threshold:
-                cond = self._check_eos_threshold(log_probs)
-                log_probs[:, self.eos_index] = mask_by_condition(
-                    log_probs[:, self.eos_index],
-                    cond,
-                    fill_value=self.minus_inf,
-                )
-
-
-            # adding LM scores to log_prob if lm_weight > 0
-            if self.lm_weight > 0:
-                lm_log_probs, lm_memory = self.lm_forward_step(
-                    inp_tokens, lm_memory
-                )
-                log_probs = log_probs + self.lm_weight * lm_log_probs
-
-            # adding CTC scores to log_prob if ctc_weight > 0
-            if self.ctc_weight > 0:
-                g = alived_seq
-                # block blank token
-                log_probs[:, self.blank_index] = self.minus_inf
-                if self.ctc_weight != 1.0 and self.ctc_score_mode == "partial":
-                    # pruning vocab for ctc_scorer
-                    _, ctc_candidates = log_probs.topk(
-                        self.beam_size * 2, dim=-1
-                    )
+        duplicated_encoder_out = dict() 
+        for k,v in encoder_out.items():
+            if k == 'padding_mask':
+                if v is not None:
+                    duplicated_encoder_out[k] = inflate_tensor(v, times=self.beam_size, dim=0)
                 else:
-                    ctc_candidates = None
+                    duplicated_encoder_out[k] = None
+            elif k == 'layer_results': 
+                tmp = []
+                for item in v : 
+                    tmp.append((inflate_tensor(item[0], times=self.beam_size, dim=1),))
+                duplicated_encoder_out[k] = tmp
+            else :
+                duplicated_encoder_out[k] = inflate_tensor(v, times=self.beam_size, dim=1)
+        encoder_out = duplicated_encoder_out
 
-                ctc_log_probs, ctc_memory = ctc_scorer.forward_step(
-                    g, ctc_memory, ctc_candidates, attn
+
+        with torch.no_grad():
+            for t in range(max_decode_steps):
+                # terminate condition
+                if self._check_full_beams(hyps_and_scores, self.beam_size):
+                    break
+
+                log_probs, memory, attn = self.forward_step(
+                    inp_tokens, memory, encoder_out, enc_lens
                 )
-                log_probs = log_probs + self.ctc_weight * ctc_log_probs
+                log_probs = self.att_weight * log_probs
 
-            scores = sequence_scores.unsqueeze(1).expand(-1, vocab_size)
-            scores = scores + log_probs
+                # Tra()
+                '''
+                (Pdb) log_probs.size(); memory.size(); attn.size()                                                                                   
+                torch.Size([14, 10001])
+                torch.Size([14, 1])
+                torch.Size([14, 1, 1757])
+                '''
 
-            # length normalization
-            if self.length_normalization:
-                scores = scores / (t + 1)
+                # Keep the original value
+                log_probs_clone = log_probs.clone().reshape(batch_size, -1)
+                vocab_size = log_probs.shape[-1]
 
-            # keep topk beams
-            scores, candidates = scores.view(batch_size, -1).topk(
-                self.beam_size, dim=-1
-            )
-
-            # The input for the next step, also the output of current step.
-            inp_tokens = (candidates % vocab_size).view(
-                batch_size * self.beam_size
-            )
-
-            scores = scores.view(batch_size * self.beam_size)
-            sequence_scores = scores
-
-            # recover the length normalization
-            if self.length_normalization:
-                sequence_scores = sequence_scores * (t + 1)
-
-            # The index of which beam the current top-K output came from in (t-1) timesteps.
-            predecessors = (
-                torch.div(candidates, vocab_size, rounding_mode="floor")
-                + self.beam_offset.unsqueeze(1).expand_as(candidates)
-            ).view(batch_size * self.beam_size)
-
-            # Permute the memory to synchoronize with the output.
-            memory = self.permute_mem(memory, index=predecessors)
-            if self.lm_weight > 0:
-                lm_memory = self.permute_lm_mem(lm_memory, index=predecessors)
-
-            if self.ctc_weight > 0:
-                ctc_memory = ctc_scorer.permute_mem(ctc_memory, candidates)
-
-            # If using_max_attn_shift, then the previous attn peak has to be permuted too.
-            if self.using_max_attn_shift:
-                prev_attn_peak = torch.index_select(
-                    prev_attn_peak, dim=0, index=predecessors
-                )
-
-            # Add coverage penalty
-            if self.coverage_penalty > 0:
-                cur_attn = torch.index_select(attn, dim=0, index=predecessors)
-
-                # coverage: cumulative attention probability vector
-                if t == 0:
-                    # Init coverage
-                    self.coverage = cur_attn
-
-                # the attn of transformer is [batch_size*beam_size, current_step, source_len]
-                if len(cur_attn.size()) > 2:
-                    self.converage = torch.sum(cur_attn, dim=1)
-                else:
-                    # Update coverage
-                    self.coverage = torch.index_select(
-                        self.coverage, dim=0, index=predecessors
+                if self.using_max_attn_shift:
+                    # Block the candidates that exceed the max shift
+                    cond, attn_peak = self._check_attn_shift(attn, prev_attn_peak)
+                    log_probs = mask_by_condition(
+                        log_probs, cond, fill_value=self.minus_inf
                     )
-                    self.coverage = self.coverage + cur_attn
+                    prev_attn_peak = attn_peak
 
-                # Compute coverage penalty and add it to scores
-                penalty = torch.max(
-                    self.coverage, self.coverage.clone().fill_(0.5)
-                ).sum(-1)
-                penalty = penalty - self.coverage.size(-1) * 0.5
-                penalty = penalty.view(batch_size * self.beam_size)
-                penalty = (
-                    penalty / (t + 1) if self.length_normalization else penalty
+                # Set eos to minus_inf when less than minimum steps.
+                if t < min_decode_steps:
+                    log_probs[:, self.eos_index] = self.minus_inf
+                    '''eos always have minus value?'''
+
+                # Set the eos prob to minus_inf when it doesn't exceed threshold.
+                if self.using_eos_threshold:
+                    cond = self._check_eos_threshold(log_probs)
+                    log_probs[:, self.eos_index] = mask_by_condition(
+                        log_probs[:, self.eos_index],
+                        cond,
+                        fill_value=self.minus_inf,
+                    )
+
+                # am_attn_max_step = attn.max(2)[1][:,-1]
+
+                # sents = []
+                # partial_ctc_decoded_outs = []
+                # for i in range(ctc_outputs.size(0)):
+                #     ctc_greedy_out = self.get_ctc_greedy_outs(ctc_outputs[i, am_attn_max_step[i]:, :].unsqueeze(0), self.blank_index)
+                #     Tra()
+                #     sent = self.fairseq_vocab.string(ctc_greedy_out[0])
+                #     bpe_sentence = sent + " </s>"
+                #     tokens = self.fairseq_vocab.encode_line(bpe_sentence, append_eos=False, add_if_not_exist=False)
+
+                #     sents.append(sent)
+                #     partial_ctc_decoded_outs.append(tokens.long())
+
+                # hypos = self.get_ctc_greedy_outs(ctc_outputs[:,t+1:,:], self.blank_index)
+                # from fairseq.data.data_utils import post_process
+
+                # sents = []
+                # partial_ctc_decoded_outs = []
+                # for h in hypos:
+                #     sent = self.fairseq_vocab.string(h)
+                #     # sent = post_process(self.fairseq_vocab.string(h), 'wordpiece')
+                #     # bpe_sentence = self.lm_bpe.encode(sent) + " </s>"
+                #     bpe_sentence = sent + " </s>"
+                #     tokens = self.fairseq_vocab.encode_line(bpe_sentence, append_eos=False, add_if_not_exist=False)
+
+                #     sents.append(sent)
+                #     partial_ctc_decoded_outs.append(tokens.long())
+
+                # Tra()
+
+                # adding LM scores to log_prob if lm_weight > 0
+                if self.lm_weight > 0:
+                    lm_log_probs, lm_memory = self.lm_forward_step(
+                        inp_tokens, lm_memory
+                    )
+                    log_probs = log_probs + self.lm_weight * lm_log_probs
+
+                    # Tra()
+                    if self.internal_lm_estimation and self.internal_lm_weight > 0: 
+                        internal_lm_log_probs, _ = self.decoder_only_forward_step(inp_tokens, lm_memory)
+                        log_probs = log_probs - self.internal_lm_weight * internal_lm_log_probs
+
+                '''
+                (Pdb) self.beam_size; inp_tokens.size(); inp_tokens; lm_memory; lm_log_probs.size(); lm_log_probs;
+                2
+                torch.Size([14])
+                tensor([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], device='cuda:0')
+                tensor([[2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2],
+                        [2]], device='cuda:0')
+                torch.Size([14, 10001])
+                tensor([[-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
+                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
+                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
+                        ...,
+                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
+                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
+                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688]],
+                    device='cuda:0', dtype=torch.float16)
+                '''
+
+                # adding CTC scores to log_prob if ctc_weight > 0
+                if self.ctc_weight > 0:
+                    g = alived_seq
+                    # block blank token
+                    log_probs[:, self.blank_index] = self.minus_inf
+                    if self.ctc_weight != 1.0 and self.ctc_score_mode == "partial":
+                        # pruning vocab for ctc_scorer
+                        _, ctc_candidates = log_probs.topk(
+                            self.beam_size * 2, dim=-1
+                        )
+                    else:
+                        ctc_candidates = None
+
+                    ctc_log_probs, ctc_memory = ctc_scorer.forward_step(
+                        g, ctc_memory, ctc_candidates, attn
+                    )
+                    # Tra()
+                    log_probs = log_probs + self.ctc_weight * ctc_log_probs
+
+                scores = sequence_scores.unsqueeze(1).expand(-1, vocab_size)
+                scores = scores + log_probs
+
+                # length normalization
+                if self.length_normalization:
+                    scores = scores / (t + 1)
+
+                # keep topk beams
+                scores, candidates = scores.view(batch_size, -1).topk(
+                    self.beam_size, dim=-1
                 )
-                scores = scores - penalty * self.coverage_penalty
 
-            # Update alived_seq
-            alived_seq = torch.cat(
-                [
-                    torch.index_select(alived_seq, dim=0, index=predecessors),
-                    inp_tokens.unsqueeze(1),
-                ],
-                dim=-1,
-            )
+                # The input for the next step, also the output of current step.
+                inp_tokens = (candidates % vocab_size).view(
+                    batch_size * self.beam_size
+                )
 
-            # Takes the log-probabilities
-            beam_log_probs = log_probs_clone[
-                torch.arange(batch_size).unsqueeze(1), candidates
-            ].reshape(batch_size * self.beam_size)
-            alived_log_probs = torch.cat(
-                [
-                    torch.index_select(
-                        alived_log_probs, dim=0, index=predecessors
-                    ),
-                    beam_log_probs.unsqueeze(1),
-                ],
-                dim=-1,
-            )
+                scores = scores.view(batch_size * self.beam_size)
+                sequence_scores = scores
 
-            is_eos = self._update_hyp_and_scores(
-                inp_tokens,
-                alived_seq,
-                alived_log_probs,
-                hyps_and_scores,
-                scores,
-                timesteps=t,
-            )
+                # recover the length normalization
+                if self.length_normalization:
+                    sequence_scores = sequence_scores * (t + 1)
 
-            # Block the paths that have reached eos.
-            sequence_scores.masked_fill_(is_eos, float("-inf"))
+                # The index of which beam the current top-K output came from in (t-1) timesteps.
+                predecessors = (
+                    torch.div(candidates, vocab_size, rounding_mode="floor")
+                    + self.beam_offset.unsqueeze(1).expand_as(candidates)
+                ).view(batch_size * self.beam_size)
 
-        if not self._check_full_beams(hyps_and_scores, self.beam_size):
-            # Using all eos to fill-up the hyps.
-            eos = (
-                torch.zeros(batch_size * self.beam_size, device=device)
-                .fill_(self.eos_index)
-                .long()
-            )
-            _ = self._update_hyp_and_scores(
-                eos,
-                alived_seq,
-                alived_log_probs,
-                hyps_and_scores,
-                scores,
-                timesteps=max_decode_steps,
-            )
+                # Permute the memory to synchoronize with the output.
+                memory = self.permute_mem(memory, index=predecessors)
+                if self.lm_weight > 0:
+                    lm_memory = self.permute_lm_mem(lm_memory, index=predecessors)
+                if self.ctc_weight > 0:
+                    ctc_memory = ctc_scorer.permute_mem(ctc_memory, candidates)
 
-        (
-            topk_hyps,
-            topk_scores,
-            topk_lengths,
-            log_probs,
-        ) = self._get_top_score_prediction(hyps_and_scores, topk=self.topk,)
-        # pick the best hyp
-        predictions = topk_hyps[:, 0, :]
-        predictions = batch_filter_seq2seq_output(
-            predictions, eos_id=self.eos_index
-        )
+                # If using_max_attn_shift, then the previous attn peak has to be permuted too.
+                if self.using_max_attn_shift:
+                    prev_attn_peak = torch.index_select(
+                        prev_attn_peak, dim=0, index=predecessors
+                    )
+
+                # Add coverage penalty
+                if self.coverage_penalty > 0:
+                    cur_attn = torch.index_select(attn, dim=0, index=predecessors)
+
+                    # coverage: cumulative attention probability vector
+                    if t == 0:
+                        # Init coverage
+                        self.coverage = cur_attn
+
+                    # the attn of transformer is [batch_size*beam_size, current_step, source_len]
+                    if len(cur_attn.size()) > 2:
+                        self.converage = torch.sum(cur_attn, dim=1)
+                    else:
+                        # Update coverage
+                        self.coverage = torch.index_select(
+                            self.coverage, dim=0, index=predecessors
+                        )
+                        self.coverage = self.coverage + cur_attn
+
+                    # Compute coverage penalty and add it to scores
+                    penalty = torch.max(
+                        self.coverage, self.coverage.clone().fill_(0.5)
+                    ).sum(-1)
+                    penalty = penalty - self.coverage.size(-1) * 0.5
+                    penalty = penalty.view(batch_size * self.beam_size)
+                    penalty = (
+                        penalty / (t + 1) if self.length_normalization else penalty
+                    )
+                    scores = scores - penalty * self.coverage_penalty
+
+                # Update alived_seq
+                alived_seq = torch.cat(
+                    [
+                        torch.index_select(alived_seq, dim=0, index=predecessors),
+                        inp_tokens.unsqueeze(1),
+                    ],
+                    dim=-1,
+                )
+
+                # Takes the log-probabilities
+                beam_log_probs = log_probs_clone[
+                    torch.arange(batch_size).unsqueeze(1), candidates
+                ].reshape(batch_size * self.beam_size)
+                alived_log_probs = torch.cat(
+                    [
+                        torch.index_select(
+                            alived_log_probs, dim=0, index=predecessors
+                        ),
+                        beam_log_probs.unsqueeze(1),
+                    ],
+                    dim=-1,
+                )
+
+                is_eos = self._update_hyp_and_scores(
+                    inp_tokens,
+                    alived_seq,
+                    alived_log_probs,
+                    hyps_and_scores,
+                    scores,
+                    timesteps=t,
+                )
+
+                # Block the paths that have reached eos.
+                sequence_scores.masked_fill_(is_eos, float("-inf"))
+
+            if not self._check_full_beams(hyps_and_scores, self.beam_size):
+                # Using all eos to fill-up the hyps.
+                eos = (
+                    torch.zeros(batch_size * self.beam_size, device=device)
+                    .fill_(self.eos_index)
+                    .long()
+                )
+                _ = self._update_hyp_and_scores(
+                    eos,
+                    alived_seq,
+                    alived_log_probs,
+                    hyps_and_scores,
+                    scores,
+                    timesteps=max_decode_steps,
+                )
+
+            (
+                topk_hyps,
+                topk_scores,
+                topk_lengths,
+                log_probs,
+                indices,
+            ) = self._get_top_score_prediction(hyps_and_scores, topk=self.topk, return_indices=True)
+            # pick the best hyp
+
+            topk_attns = [attn[index.item()] for index in indices]
+            predictions = topk_hyps[:, 0, :]
+            predictions = batch_filter_seq2seq_output(predictions, eos_id=self.eos_index)
 
         if self.return_log_probs:
-            return predictions, topk_scores, log_probs
+            return predictions, topk_scores, topk_attns, log_probs
         else:
-            return predictions, topk_scores
-            
+            return predictions, topk_scores, topk_attns
+
+    def ctc_forward_step(self, x):
+        """Applies a ctc step during bramsearch."""
+        logits = self.ctc_fc(x)
+        log_probs = self.softmax(logits/self.temperature_ctc)
+        # log_probs = self.softmax(logits/0.1)
+
+        # Tra()
+        '''
+        logits = self.ctc_fc(x)
+        log_probs = self.softmax(logits)
+        ctc_outputs = log_probs.transpose(0, 1)
+
+        prob = torch.exp(ctc_outputs)
+        log_prob = torch.nn.functional.log_softmax(ctc_outputs, -1)
+        ent_ = -prob * (log_prob)
+        ent = ent_.sum(-1).sum()
+
+        logits = self.ctc_fc(x)
+        log_probs = self.softmax(logits/0.1)
+        ctc_outputs = log_probs.transpose(0, 1)
+
+        prob = torch.nn.functional.softmax(ctc_outputs, -1)
+        log_prob = torch.nn.functional.log_softmax(ctc_outputs, -1)
+        ent_ = -prob * (log_prob)
+        ent2 = ent_.sum(-1).sum()
+
+        tensor(236.3943, device='cuda:0')
+
+        kld 
+        tensor(31841.0840, device='cuda:0')
+        '''
+
+        return log_probs
+
     def forward_step(self, inp_tokens, memory, encoder_out, enc_lens):
         """Performs a step in the implemented beamsearcher."""
 
-        # memory = _update_mem(inp_tokens, memory)
-        # pred, attn = self.model.decode(memory, enc_states)
-        # prob_dist = self.softmax(self.fc(pred) / self.temperature)
+        # Tra()
+        with torch.no_grad():
+            # memory = _update_mem(inp_tokens, memory)
+            # pred, attn = self.model.decode(memory, enc_states)
+            # prob_dist = self.softmax(self.fc(pred) / self.temperature)
 
-        memory = _update_mem(inp_tokens, memory)
-        # result = self.model.decoder(prev_output_tokens = memory, encoder_out = encoder_out)
-        result = self.attention_decoder(prev_output_tokens = memory, encoder_out = encoder_out)
-        prob_dist = self.softmax(result[0] / self.temperature)
-        attn = result[1]['attn']
+            memory = _update_mem(inp_tokens, memory)
+            # result = self.model.decoder(prev_output_tokens = memory, encoder_out = encoder_out)
+            result = self.attention_decoder(prev_output_tokens = memory, encoder_out = encoder_out)
+            prob_dist = self.softmax(result[0] / self.temperature)
+            attn = result[1]['attn']
 
         return prob_dist[:, -1, :], memory, attn
+
+    def decoder_only_forward_step(self, inp_tokens, memory):
+
+        with torch.no_grad():
+            memory = _update_mem(inp_tokens, memory)
+            result = self.attention_decoder(prev_output_tokens = memory, encoder_out = None)
+            prob_dist = self.softmax(result[0] / self.temperature_lm)
+
+        return prob_dist[:, -1, :], memory
+
 
     def lm_forward_step(self, inp_tokens, memory):
         """Performs a step in the implemented LM module."""
 
-        # memory = _update_mem(inp_tokens, memory)
-        # if not next(self.lm_modules.parameters()).is_cuda:
-        #     self.lm_modules.to(inp_tokens.device)
-        # logits = self.lm_modules(memory)
-        # log_probs = self.softmax(logits / self.temperature_lm)
+        with torch.no_grad():
+            # memory = _update_mem(inp_tokens, memory)
+            # if not next(self.lm_modules.parameters()).is_cuda:
+            #     self.lm_modules.to(inp_tokens.device)
+            # logits = self.lm_modules(memory)
+            # log_probs = self.softmax(logits / self.temperature_lm)
 
-        memory = _update_mem(inp_tokens, memory)
-        if not next(self.lm_modules.parameters()).is_cuda:
-            self.lm_modules.to(inp_tokens.device)
-        logits = self.lm_modules(memory)
+            memory = _update_mem(inp_tokens, memory)
+            if not next(self.lm_modules.parameters()).is_cuda:
+                self.lm_modules.to(inp_tokens.device)
+            logits = self.lm_modules(memory)
 
-        # adaptive_softmax_layer = False
-        # for k, p in self.lm_modules.named_parameters(): 
-        #     if 'adaptive' in k : 
-        #         adaptive_softmax_layer = True
-                
-        try:
-            log_probs = self.lm_modules.adaptive_softmax.get_log_prob(logits[0] / self.temperature_lm, None)
-        except:
-            log_probs = self.softmax(logits[0] / self.temperature_lm)
-
-        # Tra()
+            # adaptive_softmax_layer = False
+            # for k, p in self.lm_modules.named_parameters(): 
+            #     if 'adaptive' in k : 
+            #         adaptive_softmax_layer = True
+                    
+            try:
+                log_probs = self.lm_modules.adaptive_softmax.get_log_prob(logits[0] / self.temperature_lm, None)
+            except:
+                log_probs = self.softmax(logits[0] / self.temperature_lm)
 
         return log_probs[:, -1, :], memory
+
+    def get_ctc_greedy_outs(self, emissions, blank_id):
+        def get_pred(e):
+            toks = e.argmax(dim=-1).unique_consecutive()
+            return toks[toks != blank_id]
+        greedy_outs = [get_pred(x).cpu().detach().tolist() for x in emissions]
+        return greedy_outs
+
+
+    def load_ngram(self, path):
+        import kenlm
+        ngram = kenlm.LanguageModel(path)
+        return ngram
+
 
 
 def batch_filter_seq2seq_output(prediction, eos_id=-1):
@@ -1821,6 +2033,7 @@ def batch_filter_seq2seq_output(prediction, eos_id=-1):
     >>> predictions
     [[1, 2, 3], [2, 3]]
     """
+    # Tra()
     outputs = []
     for p in prediction:
         res = filter_seq2seq_output(p.tolist(), eos_id=eos_id)

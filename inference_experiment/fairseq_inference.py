@@ -273,8 +273,8 @@ def main():
     with torch.no_grad():
       # joint_aed_head_predicted_tokens = greedy_decoding(joint_model, tgt_dict, joint_encoder_out)
       joint_aed_head_predicted_tokens, _, _ = joint_model.greedy_decoding(tgt_dict, tgt_dict.eos(), {'net_input' : encoder_input}, joint_encoder_out)
-      joint_predicted_tokens, scores = joint_decoder(joint_encoder_out, wav_lens)
-      joint_lm_predicted_tokens, scores = joint_decoder_with_lm(joint_encoder_out, wav_lens)
+      joint_predicted_tokens, scores, attn = joint_decoder(joint_encoder_out, wav_lens)
+      joint_lm_predicted_tokens, scores, attn = joint_decoder_with_lm(joint_encoder_out, wav_lens)
 
 
     for i, (
