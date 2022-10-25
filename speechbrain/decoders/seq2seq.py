@@ -359,9 +359,11 @@ class S2SBeamSearcher(S2SBaseSearcher):
         self.coverage = None
 
         if self.length_normalization and self.length_rewarding > 0:
-            raise ValueError(
-                "length normalization is not compatible with length rewarding."
-            )
+            print("length rewarding (penalty) detected, but length normalization is activated too, lets use length rewarding")
+            self.length_normalization = False
+            # raise ValueError(
+            #     "length normalization is not compatible with length rewarding."
+            # )
 
         self.using_eos_threshold = using_eos_threshold
         self.eos_threshold = eos_threshold
@@ -499,17 +501,29 @@ class S2SBeamSearcher(S2SBaseSearcher):
             for index in eos_indices:
                 # convert to int
                 index = index.item()
-                batch_id = torch.div(
-                    index, self.beam_size, rounding_mode="floor"
-                )
+                batch_id = torch.div(index, self.beam_size, rounding_mode="floor")
                 if len(hyps_and_scores[batch_id]) == self.beam_size:
                     continue
                 hyp = alived_seq[index, :]
                 log_probs = alived_log_probs[index, :]
-                final_scores = scores[index] + self.length_rewarding * (
-                    timesteps + 1
-                )
+                # Tra()
+                final_scores = scores[index] + self.length_rewarding * (timesteps + 1)
                 hyps_and_scores[batch_id].append((hyp, log_probs, final_scores))
+            # Tra()
+            '''
+            (Pdb) is_eos; eos_indices
+            tensor([ True, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False,
+                    False, False, False, False, False, False, False, False, False, False],
+                device='cuda:0')
+            tensor([0], device='cuda:0')
+            '''
+
         return is_eos
 
     def _get_top_score_prediction(self, hyps_and_scores, topk, return_indices=False):
@@ -779,13 +793,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
             log_probs_clone = log_probs.clone().reshape(batch_size, -1)
             vocab_size = log_probs.shape[-1]
 
-            '''
-            (Pdb) self.using_max_attn_shift
-            False
-            (Pdb) self.using_eos_threshold
-            False
-            '''
-
             if self.using_max_attn_shift:
                 # Block the candidates that exceed the max shift
                 cond, attn_peak = self._check_attn_shift(attn, prev_attn_peak)
@@ -807,13 +814,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
                     cond,
                     fill_value=self.minus_inf,
                 )
-            
-            # Tra()
-
-            '''
-            (Pdb) inp_tokens.size(); lm_memory
-            torch.Size([528])
-            '''
 
             # adding LM scores to log_prob if lm_weight > 0
             if self.lm_weight > 0:
@@ -1375,8 +1375,9 @@ def mask_by_condition(tensor, cond, fill_value):
     tensor([[1., 2., 0.],
             [4., 0., 0.]])
     """
+    # Tra()
     tensor = torch.where(
-        cond, tensor, torch.Tensor([fill_value]).to(tensor.device)
+        cond, tensor, torch.Tensor([fill_value]).type_as(tensor)
     )
     return tensor
 
@@ -1463,6 +1464,9 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
         logits = self.lm_modules(memory)
         log_probs = self.softmax(logits / self.temperature_lm)
         return log_probs[:, -1, :], memory
+
+
+
 
 
 
@@ -1674,37 +1678,6 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                         fill_value=self.minus_inf,
                     )
 
-                # am_attn_max_step = attn.max(2)[1][:,-1]
-
-                # sents = []
-                # partial_ctc_decoded_outs = []
-                # for i in range(ctc_outputs.size(0)):
-                #     ctc_greedy_out = self.get_ctc_greedy_outs(ctc_outputs[i, am_attn_max_step[i]:, :].unsqueeze(0), self.blank_index)
-                #     Tra()
-                #     sent = self.fairseq_vocab.string(ctc_greedy_out[0])
-                #     bpe_sentence = sent + " </s>"
-                #     tokens = self.fairseq_vocab.encode_line(bpe_sentence, append_eos=False, add_if_not_exist=False)
-
-                #     sents.append(sent)
-                #     partial_ctc_decoded_outs.append(tokens.long())
-
-                # hypos = self.get_ctc_greedy_outs(ctc_outputs[:,t+1:,:], self.blank_index)
-                # from fairseq.data.data_utils import post_process
-
-                # sents = []
-                # partial_ctc_decoded_outs = []
-                # for h in hypos:
-                #     sent = self.fairseq_vocab.string(h)
-                #     # sent = post_process(self.fairseq_vocab.string(h), 'wordpiece')
-                #     # bpe_sentence = self.lm_bpe.encode(sent) + " </s>"
-                #     bpe_sentence = sent + " </s>"
-                #     tokens = self.fairseq_vocab.encode_line(bpe_sentence, append_eos=False, add_if_not_exist=False)
-
-                #     sents.append(sent)
-                #     partial_ctc_decoded_outs.append(tokens.long())
-
-                # Tra()
-
                 # adding LM scores to log_prob if lm_weight > 0
                 if self.lm_weight > 0:
                     lm_log_probs, lm_memory = self.lm_forward_step(
@@ -1823,20 +1796,14 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                         self.converage = torch.sum(cur_attn, dim=1)
                     else:
                         # Update coverage
-                        self.coverage = torch.index_select(
-                            self.coverage, dim=0, index=predecessors
-                        )
+                        self.coverage = torch.index_select(self.coverage, dim=0, index=predecessors)
                         self.coverage = self.coverage + cur_attn
 
                     # Compute coverage penalty and add it to scores
-                    penalty = torch.max(
-                        self.coverage, self.coverage.clone().fill_(0.5)
-                    ).sum(-1)
+                    penalty = torch.max(self.coverage, self.coverage.clone().fill_(0.5)).sum(-1)
                     penalty = penalty - self.coverage.size(-1) * 0.5
                     penalty = penalty.view(batch_size * self.beam_size)
-                    penalty = (
-                        penalty / (t + 1) if self.length_normalization else penalty
-                    )
+                    penalty = (penalty / (t + 1) if self.length_normalization else penalty)
                     scores = scores - penalty * self.coverage_penalty
 
                 # Update alived_seq
@@ -1968,7 +1935,6 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
 
         return prob_dist[:, -1, :], memory
 
-
     def lm_forward_step(self, inp_tokens, memory):
         """Performs a step in the implemented LM module."""
 
@@ -2003,12 +1969,10 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         greedy_outs = [get_pred(x).cpu().detach().tolist() for x in emissions]
         return greedy_outs
 
-
     def load_ngram(self, path):
         import kenlm
         ngram = kenlm.LanguageModel(path)
         return ngram
-
 
 
 def batch_filter_seq2seq_output(prediction, eos_id=-1):
