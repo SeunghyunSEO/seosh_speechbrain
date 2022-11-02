@@ -433,6 +433,18 @@ class S2SBeamSearcher(S2SBaseSearcher):
         attn_peak : torch.Tensor
             The peak of the attn tensor.
         """
+
+        # Tra()
+        '''
+        (Pdb) prev_attn_peak.size(); attn.size(); torch.max(attn, dim=1)[1].size()
+        torch.Size([64])
+        torch.Size([64, 599])
+        torch.Size([64])
+
+        (Pdb) self.max_attn_shift
+        60
+        '''
+
         # Block the candidates that exceed the max shift
         _, attn_peak = torch.max(attn, dim=1)
         lt_cond = attn_peak <= (prev_attn_peak + self.max_attn_shift)
@@ -441,6 +453,29 @@ class S2SBeamSearcher(S2SBaseSearcher):
         # True if not exceed limit
         # Multiplication equals to element-wise and for tensor
         cond = (lt_cond * mt_cond).unsqueeze(1)
+        '''
+        (Pdb) attn_peak; lt_cond; mt_cond; cond.size()
+        tensor([ 19,  10,  12,  12,   8,  35,  47,   0,   0,  11,  22,   0,  18,  31,
+                20,  23,  58,  20,  16,  25,  16,  11,  12,  12,  46,  23,  12,  47,
+                12,  11,  19,  82,   7,  11,  43, 314,  37, 360,  52,  37,  27,  18,
+                23,  69,  12,  42,  10,  28,  21,  21,   5,  26,  27,  18,  26,  25,
+                11,  19,  11,  40,  11,  16,  17,  48], device='cuda:0')
+        tensor([ True,  True,  True,  True,  True,  True,  True,  True,  True,  True,
+                True,  True,  True,  True,  True,  True,  True,  True,  True,  True,
+                True,  True,  True,  True,  True,  True,  True,  True,  True,  True,
+                True, False,  True,  True,  True, False,  True, False,  True,  True,
+                True,  True,  True, False,  True,  True,  True,  True,  True,  True,
+                True,  True,  True,  True,  True,  True,  True,  True,  True,  True,
+                True,  True,  True,  True], device='cuda:0')
+        tensor([True, True, True, True, True, True, True, True, True, True, True, True,
+                True, True, True, True, True, True, True, True, True, True, True, True,
+                True, True, True, True, True, True, True, True, True, True, True, True,
+                True, True, True, True, True, True, True, True, True, True, True, True,
+                True, True, True, True, True, True, True, True, True, True, True, True,
+                True, True, True, True], device='cuda:0')
+        torch.Size([64, 1])
+        '''
+
         return cond, attn_peak
 
     def _check_eos_threshold(self, log_probs):
@@ -457,8 +492,8 @@ class S2SBeamSearcher(S2SBaseSearcher):
         cond : torch.BoolTensor
             Each element represents whether the eos log-probabilities will be kept.
         """
-        max_probs, _ = torch.max(log_probs, dim=-1)
-        eos_probs = log_probs[:, self.eos_index]
+        max_probs, _ = torch.max(log_probs, dim=-1) # B, 1
+        eos_probs = log_probs[:, self.eos_index] # B, vocab_size -> B, 1
         cond = eos_probs > (self.eos_threshold * max_probs)
         return cond
 
@@ -506,10 +541,14 @@ class S2SBeamSearcher(S2SBaseSearcher):
                     continue
                 hyp = alived_seq[index, :]
                 log_probs = alived_log_probs[index, :]
-                # Tra()
+
+                '''
+                Length: To encourage the generation of longer sequences, 
+                we apply length normalizations during beam search.
+                '''
                 final_scores = scores[index] + self.length_rewarding * (timesteps + 1)
                 hyps_and_scores[batch_id].append((hyp, log_probs, final_scores))
-            # Tra()
+
             '''
             (Pdb) is_eos; eos_indices
             tensor([ True, False, False, False, False, False, False, False, False, False,
@@ -628,8 +667,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
         if self.lm_weight > 0:
             lm_memory = self.reset_lm_mem(batch_size * self.beam_size, device)
 
-        # Tra()
-
         if self.ctc_weight > 0:
             # (batch_size * beam_size, L, vocab_size)
             ctc_outputs = self.ctc_forward_step(enc_states)
@@ -739,8 +776,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
             if self._check_full_beams(hyps_and_scores, self.beam_size):
                 break
 
-            # Tra()
-
             '''
             (Pdb) t; inp_tokens.size(); memory; enc_states.size(); enc_lens.size();
             0
@@ -761,6 +796,8 @@ class S2SBeamSearcher(S2SBaseSearcher):
             )
             log_probs = self.att_weight * log_probs
 
+            # Tra()
+
             '''
             (Pdb) t; log_probs.size(); memory.size(); attn.size()
             0
@@ -773,21 +810,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
             torch.Size([528, 5000])
             torch.Size([528, 2])
             torch.Size([528, 2, 107])
-
-            (Pdb) t; memory; memory.size(); attn.size()
-            4
-            tensor([[   1,   28, 1934,   18,    7],
-                    [   1,   28,  462,   18,    7],
-                    [   1,   28, 1934,   18,    9],
-                    ...,
-                    [   1,   74,   12,  127,    4],
-                    [   1,   19,   74,   12, 1395],
-                    [   1,   74,   12, 1395,    4]], device='cuda:0')
-            torch.Size([528, 5])
-            torch.Size([528, 5, 107])
             '''
-
-            # Tra()
 
             # Keep the original value
             log_probs_clone = log_probs.clone().reshape(batch_size, -1)
@@ -1468,17 +1491,9 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
 
 
 
-
-
-
-
-
-
-
 class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
     def __init__(
         self, 
-        # model,
         attention_decoder,
         ctc_layer, 
         temperature=1.0, 
@@ -1488,15 +1503,12 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         lm_fairseq_vocab=None,
         internal_lm_estimation=False,
         internal_lm_weight=1.0,
+        no_repeat_ngram_size=0,
+        blank_collapse=0.0,
         **kwargs,
     ):
         super(S2STransformerBeamSearchforFairseq, self).__init__(**kwargs)
 
-        # self.model = modules[0]
-        # self.fc = modules[1]
-        # self.ctc_fc = modules[2]
-
-        # self.model = model
         self.attention_decoder = attention_decoder
         self.ctc_fc = ctc_layer
 
@@ -1511,6 +1523,13 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
 
         self.fairseq_vocab = fairseq_vocab
         self.lm_fairseq_vocab = lm_fairseq_vocab
+
+        if no_repeat_ngram_size > 0:
+            self.repeat_ngram_blocker = NGramRepeatBlock(no_repeat_ngram_size)
+        else:
+            self.repeat_ngram_blocker = None
+
+        self.blank_collapse = blank_collapse
 
     def reset_mem(self, batch_size, device):
         """Needed to reset the memory during beamsearch."""
@@ -1543,13 +1562,50 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
 
         if self.lm_weight > 0:
             lm_memory = self.reset_lm_mem(batch_size * self.beam_size, device)
-
+        
         if self.ctc_weight > 0:
             # (batch_size * beam_size, L, vocab_size)
             ctc_outputs = self.ctc_forward_step(enc_states.transpose(0, 1))
             ctc_outputs = ctc_outputs.transpose(0, 1).float().detach()
             # if ctc_outputs.dtype==torch.float16 :
             #     ctc_outputs = ctc_outputs.transpose(0, 1).float().detach()
+
+            # self.blank_collapse = 0.999
+            # self.blank_collapse = 0.99
+            if self.blank_collapse != 1:
+                if 'padding_mask' in encoder_out.keys():
+                    ## in fairseq latest version, padding mask is renamed
+                    if encoder_out['padding_mask'] is None:
+                        output_lengths = [encoder_out['encoder_out'].size(0)] * encoder_out['encoder_out'].size(1)
+                        padding_mask = (torch.zeros(encoder_out['encoder_out'].size(1), encoder_out['encoder_out'].size(0)).bool()).cuda()
+                    else:
+                        ## if all input sequences have same length, then output has no padding mask 
+                        output_lengths = (~encoder_out['padding_mask']).sum(-1).tolist()
+                        padding_mask = encoder_out['padding_mask']
+
+                ctc_probs = torch.nn.functional.softmax(ctc_outputs, dim=-1)
+
+                blank_probs = ctc_probs[:,:,self.blank_index]
+                blank_probs = blank_probs.masked_fill_(padding_mask, 0)
+
+                # blank_collapse_ratio = self.blank_collapse
+                # blank_collapse_ratio = blank_probs.max() * self.blank_collapse
+                blank_collapse_ratio = (torch.max(blank_probs, dim=1)[0] * self.blank_collapse).unsqueeze(1).expand(blank_probs.size(0), blank_probs.size(1))
+                # Tra()
+
+                collapsed_ctc_probs, collapsed_enc_states, collapsed_output_lengths = self.collapse_blanks(
+                    ctc_probs.float(), 
+                    enc_states, 
+                    output_lengths, 
+                    blank_collapse_threshold = blank_collapse_ratio
+                )
+                
+                enc_states = collapsed_enc_states
+                enc_lens = torch.tensor(collapsed_output_lengths).type_as(enc_states).int()
+                
+                ctc_outputs = collapsed_ctc_probs
+                ctc_outputs = torch.log(ctc_outputs)
+
             ctc_scorer = CTCPrefixScorer(
                 ctc_outputs,
                 enc_lens,
@@ -1639,25 +1695,36 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                 if self._check_full_beams(hyps_and_scores, self.beam_size):
                     break
 
-                log_probs, memory, attn = self.forward_step(
+                log_probs, memory, cross_attn = self.forward_step(
                     inp_tokens, memory, encoder_out, enc_lens
                 )
                 log_probs = self.att_weight * log_probs
 
-                # Tra()
+                # last time-step attention.
+                # this is for coverage penalty, attn shift, and ctc window size
+                attn = cross_attn[:, -1, :]
+
                 '''
-                (Pdb) log_probs.size(); memory.size(); attn.size()                                                                                   
-                torch.Size([14, 10001])
-                torch.Size([14, 1])
-                torch.Size([14, 1, 1757])
+                (Pdb) t; log_probs.size(); memory.size(); cross_attn.size()
+                0
+                torch.Size([528, 5000])
+                torch.Size([528, 1])
+                torch.Size([528, 1, 107])
+
+                (Pdb) t; log_probs.size(); memory.size(); cross_attn.size()
+                1
+                torch.Size([528, 5000])
+                torch.Size([528, 2])
+                torch.Size([528, 2, 107])
                 '''
 
                 # Keep the original value
                 log_probs_clone = log_probs.clone().reshape(batch_size, -1)
                 vocab_size = log_probs.shape[-1]
 
+                # Block the candidates that exceed the max shift
+                # * For example if previous peak attention time-step is 100, then if current peak attention is not in 20~120, then it does not allowed to be shifted (?)
                 if self.using_max_attn_shift:
-                    # Block the candidates that exceed the max shift
                     cond, attn_peak = self._check_attn_shift(attn, prev_attn_peak)
                     log_probs = mask_by_condition(
                         log_probs, cond, fill_value=self.minus_inf
@@ -1667,15 +1734,14 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                 # Set eos to minus_inf when less than minimum steps.
                 if t < min_decode_steps:
                     log_probs[:, self.eos_index] = self.minus_inf
-                    '''eos always have minus value?'''
 
                 # Set the eos prob to minus_inf when it doesn't exceed threshold.
+                # * For example, if eos probability of current time step is smaller than (1.5(threshold) * max log probs), make eos prob is 0
+                # * it makes model generate longer sentences 
                 if self.using_eos_threshold:
                     cond = self._check_eos_threshold(log_probs)
                     log_probs[:, self.eos_index] = mask_by_condition(
-                        log_probs[:, self.eos_index],
-                        cond,
-                        fill_value=self.minus_inf,
+                        log_probs[:, self.eos_index], cond, fill_value=self.minus_inf,
                     )
 
                 # adding LM scores to log_prob if lm_weight > 0
@@ -1685,39 +1751,16 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                     )
                     log_probs = log_probs + self.lm_weight * lm_log_probs
 
-                    # Tra()
+                    # ILME
                     if self.internal_lm_estimation and self.internal_lm_weight > 0: 
                         internal_lm_log_probs, _ = self.decoder_only_forward_step(inp_tokens, lm_memory)
                         log_probs = log_probs - self.internal_lm_weight * internal_lm_log_probs
 
                 '''
-                (Pdb) self.beam_size; inp_tokens.size(); inp_tokens; lm_memory; lm_log_probs.size(); lm_log_probs;
+                (Pdb) self.beam_size; inp_tokens.size(); lm_log_probs.size();
                 2
                 torch.Size([14])
-                tensor([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], device='cuda:0')
-                tensor([[2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2],
-                        [2]], device='cuda:0')
                 torch.Size([14, 10001])
-                tensor([[-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
-                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
-                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
-                        ...,
-                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
-                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688],
-                        [-15.9453, -15.9062,  -8.7188,  ..., -12.5625, -10.2188, -14.4688]],
-                    device='cuda:0', dtype=torch.float16)
                 '''
 
                 # adding CTC scores to log_prob if ctc_weight > 0
@@ -1733,16 +1776,32 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                     else:
                         ctc_candidates = None
 
+                    # Compute the ctc scores over the time frames using windowing based on attention peaks.
+                    # If 0, no windowing applied.
                     ctc_log_probs, ctc_memory = ctc_scorer.forward_step(
                         g, ctc_memory, ctc_candidates, attn
                     )
-                    # Tra()
                     log_probs = log_probs + self.ctc_weight * ctc_log_probs
 
+                # Ngram Block from fairseq
+                if self.repeat_ngram_blocker is not None:
+                    # Tra()
+                    '''
+                    (Pdb) memory.size(); log_probs.size(); batch_size; self.beam_size; t;
+                    torch.Size([80, 1])
+                    torch.Size([80, 513])
+                    16
+                    5
+                    0
+                    '''
+                    log_probs = self.repeat_ngram_blocker(memory, log_probs, batch_size, self.beam_size, t)
+                    
                 scores = sequence_scores.unsqueeze(1).expand(-1, vocab_size)
                 scores = scores + log_probs
 
                 # length normalization
+                # * this is not equal to length rewarding
+                # score is log level scalar.
                 if self.length_normalization:
                     scores = scores / (t + 1)
 
@@ -1782,20 +1841,38 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                         prev_attn_peak, dim=0, index=predecessors
                     )
 
-                # Add coverage penalty
-                if self.coverage_penalty > 0:
-                    cur_attn = torch.index_select(attn, dim=0, index=predecessors)
+                # Tra()
+                '''
+                (Pdb) self.coverage.size(); attn.size(); cur_attn.size()                                                                      
+                torch.Size([16, 642])
+                torch.Size([16, 642])
+                torch.Size([16, 642])
+                '''
 
-                    # coverage: cumulative attention probability vector
+                # Add coverage penalty
+                # coverage: cumulative attention probability vector
+                '''
+                Repeats: Copy models often repeatedly attend to the same source tokens, 
+                generating the same phrase multiple times. We introduce a new sum- mary specific coverage penalty
+                '''
+                if self.coverage_penalty > 0:
+                    # attn = cross_attn
+                    cur_attn = torch.index_select(attn, dim=0, index=predecessors)
+                    '''
+                    (Pdb) attn.size(); predecessors.size()
+                    torch.Size([16, 642])
+                    torch.Size([16])
+                    '''
+
+                    # Init coverage
                     if t == 0:
-                        # Init coverage
                         self.coverage = cur_attn
 
-                    # the attn of transformer is [batch_size*beam_size, current_step, source_len]
+                    # Update coverage
+                    # the attn of transformer is [batch_size*beam_size, current_step, source_len] (?)
                     if len(cur_attn.size()) > 2:
-                        self.converage = torch.sum(cur_attn, dim=1)
+                        self.coverage = torch.sum(cur_attn, dim=1)
                     else:
-                        # Update coverage
                         self.coverage = torch.index_select(self.coverage, dim=0, index=predecessors)
                         self.coverage = self.coverage + cur_attn
 
@@ -1804,7 +1881,10 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                     penalty = penalty - self.coverage.size(-1) * 0.5
                     penalty = penalty.view(batch_size * self.beam_size)
                     penalty = (penalty / (t + 1) if self.length_normalization else penalty)
-                    scores = scores - penalty * self.coverage_penalty
+
+                    # why coverage penalty have opposite direction to score?
+                    scores = scores + penalty * self.coverage_penalty
+                    # scores = scores - penalty * self.coverage_penalty
 
                 # Update alived_seq
                 alived_seq = torch.cat(
@@ -1866,7 +1946,7 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
             ) = self._get_top_score_prediction(hyps_and_scores, topk=self.topk, return_indices=True)
             # pick the best hyp
 
-            topk_attns = [attn[index.item()] for index in indices]
+            topk_attns = [cross_attn[index.item()] for index in indices]
             predictions = topk_hyps[:, 0, :]
             predictions = batch_filter_seq2seq_output(predictions, eos_id=self.eos_index)
 
@@ -1879,9 +1959,7 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         """Applies a ctc step during bramsearch."""
         logits = self.ctc_fc(x)
         log_probs = self.softmax(logits/self.temperature_ctc)
-        # log_probs = self.softmax(logits/0.1)
 
-        # Tra()
         '''
         logits = self.ctc_fc(x)
         log_probs = self.softmax(logits)
@@ -1975,6 +2053,63 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
         return ngram
 
 
+    #### Blank Collapse
+
+    def collapse_blanks(self, emissions, encoder_outs, output_lengths, blank_collapse_threshold, use_logit=False):
+        from fairseq import utils
+
+        if use_logit:
+            blanks = (utils.softmax(emissions.transpose(0, 1), dim=-1)).transpose(0, 1)[:, :, self.blank_index] > blank_collapse_threshold
+            collapsed_emissions = torch.ones_like(emissions).type_as(emissions) * float("-inf")
+            collapsed_emissions[:,:,self.blank_index] = 0 # because we use logit, it should be 0
+        else:
+            blanks = emissions[:, :, self.blank_index] > blank_collapse_threshold
+            collapsed_emissions = torch.zeros_like(emissions).type_as(emissions)
+            collapsed_emissions[:,:,self.blank_index] = 1 # because we use exact prob, dummy timestep should get blank prob as 1 
+
+            collapsed_encoder_outs = torch.zeros_like(encoder_outs).type_as(encoder_outs)
+
+        for i in range(emissions.size(0)):
+            u, c = torch.unique_consecutive(blanks[i], dim=0, return_counts=True)
+            u = u.tolist()
+            c = c.tolist()
+            cc = []
+            first_blanks = 0
+            k = 0
+            for j in range(len(c)):
+                c[j] = min(c[j], output_lengths[i] - k)
+                if u[j]:    # if blank
+                    if j == 0:
+                        first_blanks = c[j]
+                    else:
+                        if j < len(c) - 1:
+                            cc.append(c[j])
+                else:
+                    cc += [1] * c[j]
+                k += c[j]
+                if k >= output_lengths[i]:
+                    break
+            if len(cc) == 0:    # case: every frame is a blank frame
+                cc = [0]
+                first_blanks = 0
+
+            org_index = torch.cumsum(torch.tensor(cc), dim=0) + first_blanks - 1
+
+            emission = emissions[i, org_index]
+            encoder_out = encoder_outs[i, org_index]
+            
+            collapsed_emissions[i, :len(emission)] = emission
+            collapsed_encoder_outs[i, :len(encoder_out)] = encoder_out
+
+            output_lengths[i] = len(emission)
+
+        collapsed_emissions = collapsed_emissions[:, :max(output_lengths)]
+        collapsed_encoder_outs = collapsed_encoder_outs[:, :max(output_lengths)]
+
+        return collapsed_emissions, collapsed_encoder_outs, output_lengths
+
+
+
 def batch_filter_seq2seq_output(prediction, eos_id=-1):
     """Calling batch_size times of filter_seq2seq_output.
 
@@ -2038,3 +2173,138 @@ def filter_seq2seq_output(string_pred, eos_id=-1):
     else:
         raise ValueError("The input must be a list.")
     return string_out
+
+
+
+
+
+#### Ngram Blocker from fairseq
+# Originally from Microsoft Corporation.
+# Licensed under the MIT License.
+
+'''
+https://github.com/microsoft/fastseq/blob/main/fastseq/clib/cuda/ngram_repeat_block_cuda.cpp
+# pip install git+https://github.com/microsoft/fastseq.git
+
+https://github.com/facebookresearch/fairseq/blob/main/fairseq/ngram_repeat_block.py
+https://github.com/facebookresearch/fairseq/blob/main/fairseq/sequence_generator.py#L421
+'''
+
+""" Wrapper for ngram_repeat_block cuda extension """
+import math
+import warnings
+from typing import List
+
+import torch
+from torch import nn
+
+try:
+    from fairseq import ngram_repeat_block_cuda
+
+    EXTENSION_BUILT = True
+except ImportError:
+    EXTENSION_BUILT = False
+
+
+def is_cuda_extension_usable() -> bool:
+    """Check whether ngram_repeat_block_cuda is built properly"""
+    if not EXTENSION_BUILT or not torch.cuda.is_available():
+        return False
+    bsz = 2
+    tokens = torch.tensor([[4, 4, 3, 2], [1, 2, 3, 4]], dtype=torch.long, device="cuda")
+    lprobs = torch.rand((8, 12), device="cuda")
+    try:
+        outputs = ngram_repeat_block_cuda.forward(tokens, lprobs, bsz, 3, 4, 3)
+        outputs = outputs + 4  # This line breaks if the extension is built incorrectly.
+        return True
+    except RuntimeError:
+        warnings.warn(
+            "NGramRepeatBlock extension must be rebuilt."
+            'Run TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0" python setup.py build_ext --inplace'
+        )
+        return False
+
+
+class NGramRepeatBlock(nn.Module):
+    """Wrapper class for calling ngram_repeat_block cuda extension"""
+
+    def __init__(self, no_repeat_ngram_size: int, use_extension: bool = True):
+        super().__init__()
+        self.use_extension = is_cuda_extension_usable() if use_extension else False
+        self.no_repeat_ngram_size = no_repeat_ngram_size
+
+    def reset_parameters(self):
+        pass
+
+    @torch.jit.unused
+    def call_cuda_extension(
+        self,
+        tokens,
+        lprobs,
+        bsz: int,
+        beam_size: int,
+        step: int,
+    ):
+        return ngram_repeat_block_cuda.forward(
+            tokens, lprobs, bsz, step, beam_size, self.no_repeat_ngram_size
+        )
+
+    def forward(
+        self,
+        tokens,
+        lprobs,
+        bsz: int,
+        beam_size: int,
+        step: int,
+    ):
+        """
+        Args:
+            tokens(Tensor): Input tokens(Bsz*beam, seq_len)
+            lprobs(Tensor): likelihood probability,
+            Expected to be updated in place.(Bsz*beam, vocab_size)
+            bsz(int): batch size
+            step(int): current step
+            beam_size(int): beam size
+            no_repeat_ngram_size(int): Ngram size
+        """
+        msg = f"expected {bsz *beam_size} got"
+        assert tokens.size(0) == bsz * beam_size, f"{msg} {tokens.size(0)}"
+        assert lprobs.size(0) == bsz * beam_size, f"{msg} {lprobs.size(0)}"
+        if self.use_extension:
+            return self.call_cuda_extension(tokens, lprobs, bsz, beam_size, step)
+
+        else:
+            return self._no_repeat_ngram(
+                tokens,
+                lprobs,
+                bsz,
+                beam_size,
+                step,
+            )
+
+    def _no_repeat_ngram(self, tokens, lprobs, bsz: int, beam_size: int, step: int):
+        """For each hypothesis generate a list of previous ngrams and set associated lprobs to -inf"""
+
+        banned_tokens = [
+            torch.jit.annotate(List[int], []) for bbsz_idx in range(bsz * beam_size)
+        ]
+        if step + 2 - self.no_repeat_ngram_size >= 0:
+            cpu_tokens: List[List[int]] = tokens.cpu().tolist()
+            check_start_pos = step + 2 - self.no_repeat_ngram_size
+            for bbsz_idx in range(bsz * beam_size):
+                ngram_to_check = cpu_tokens[bbsz_idx][
+                    -(self.no_repeat_ngram_size - 1) :
+                ]
+                for i in range(check_start_pos):
+                    if (
+                        ngram_to_check
+                        == cpu_tokens[bbsz_idx][i : i + self.no_repeat_ngram_size - 1]
+                    ):
+                        banned_tokens[bbsz_idx].append(
+                            cpu_tokens[bbsz_idx][i + self.no_repeat_ngram_size - 1]
+                        )
+        for bbsz_idx in range(bsz * beam_size):
+            lprobs[bbsz_idx][
+                torch.tensor(banned_tokens[bbsz_idx], dtype=torch.int64)
+            ] = torch.tensor(-math.inf).to(lprobs)
+        return lprobs
