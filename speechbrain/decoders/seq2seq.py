@@ -1684,10 +1684,15 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                 for item in v : 
                     tmp.append((inflate_tensor(item[0], times=self.beam_size, dim=1),))
                 duplicated_encoder_out[k] = tmp
+            elif 'intermediate' in k :
+                tmp = []
+                for item in v : 
+                    tmp.append( ( (item[0], inflate_tensor(item[1], times=self.beam_size, dim=1) ) ) )
+                duplicated_encoder_out[k] = tmp
             else :
                 duplicated_encoder_out[k] = inflate_tensor(v, times=self.beam_size, dim=1)
-        encoder_out = duplicated_encoder_out
 
+        encoder_out = duplicated_encoder_out
 
         with torch.no_grad():
             for t in range(max_decode_steps):
@@ -1696,7 +1701,10 @@ class S2STransformerBeamSearchforFairseq(S2SBeamSearcher):
                     break
 
                 log_probs, memory, cross_attn = self.forward_step(
-                    inp_tokens, memory, encoder_out, enc_lens
+                    inp_tokens, 
+                    memory, 
+                    encoder_out, 
+                    enc_lens
                 )
                 log_probs = self.att_weight * log_probs
 
