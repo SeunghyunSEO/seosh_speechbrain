@@ -31,7 +31,7 @@ def main():
   ######################## CTC ########################
   #####################################################
 
-  ctc_model_path = "/mnt/clova_speech/users/seosh/librispeech_model/am/w2v2/wav2vec2_vox_960h_new.pt"
+  ctc_model_path = "/workspace/librispeech_model/am/w2v2/wav2vec2_vox_960h_new.pt"
   path, checkpoint = os.path.split(ctc_model_path)
   
   overrides = {
